@@ -400,12 +400,16 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
     glBindTexture(GL_TEXTURE_2D, m_gbufferDepth);
     glUniform1i(glGetUniformLocation(lightingProgramID, "gDepth"), 3);
     
-    // Bind shadow map texture
-    if (shadowsEnabled && shadowMapTexture != 0 && numCascades > 0) {
-        glActiveTexture(GL_TEXTURE4);
-        glBindTexture(GL_TEXTURE_2D_ARRAY, shadowMapTexture);
-        glUniform1i(glGetUniformLocation(lightingProgramID, "u_shadowMap"), 4);
+    // Bind shadow map texture. Unconditionally, even with no shadow map to
+    // bind: u_shadowMap is a sampler2DArray, and leaving it unassigned leaves it
+    // on unit 0 alongside gAlbedo's sampler2D. Two sampler types on one texture
+    // unit is invalid, and every draw of the pass would report it. Unit 4 with
+    // nothing bound simply samples black, which u_shadowsEnabled then ignores.
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, shadowMapTexture);
+    glUniform1i(glGetUniformLocation(lightingProgramID, "u_shadowMap"), 4);
 
+    if (shadowsEnabled && shadowMapTexture != 0 && numCascades > 0) {
         // Pass number of cascades
         GLint numCascadesLoc = glGetUniformLocation(lightingProgramID, "u_numCascades");
         if (numCascadesLoc != -1) {

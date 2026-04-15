@@ -7,6 +7,8 @@
 // InstancedGeometry.h provides RenderLayer and the Geometry/Instance handle
 // types callers use with the instanced-geometry API below.
 #include "instancedGeometry/InstancedGeometry.h"
+// CdlodConfig.h carries the creation parameters of a CDLOD body by value.
+#include "cdlod/CdlodConfig.h"
 #include <memory>
 #include <string>
 #include <vector>
@@ -20,6 +22,7 @@ class MeshManager2D;
 class InstanceHandler;
 class SSBOManager;
 class ShadowRenderer;
+class CdlodHandler;
 
 class TimeHandler;
 
@@ -170,10 +173,34 @@ public:
     void removeRayVolumeInstance(std::weak_ptr<Geometry> geometry,
                                  std::weak_ptr<Instance> instance);
 
+    // CDLOD bodies: cube-quadtree surfaces subdivided by distance, drawn opaque
+    // and shadow casting. The body is placed through the shared transform SSBO,
+    // so the caller allocates an index (m_ssboManager->allocateIndex()) and
+    // drives it with updateMeshTransform, exactly like a mesh or an instance.
+    // That lets anything else on the same body cite the same index.
+    //
+    // A surface is the GLSL that shapes the body: it maps a point on the base
+    // sphere to the final surface, and returns the normal there. Empty path
+    // gives the bare sphere. Bodies sharing a surface share its programs.
+    size_t createCdlodSurface(const std::string& snippetPath = "");
+    size_t createCdlodBody(int ssboIndex, const CdlodConfig& config,
+                           size_t surfaceIndex = 0);
+    void removeCdlodBody(size_t bodyHandle);
+    // Debug view of the subdivision: wireframe patches tinted by quadtree level.
+    // Scoped to the CDLOD bodies, unlike setTriangleRenderMode above.
+    void setCdlodWireframe(bool wireframe);
+    bool getCdlodWireframe() const;
+
     // Render parameter access
     std::pair<uint64_t, double> getRenderParameters() const { return {m_currentInterpolationTimeStep, m_interpolationTimeRemainder}; }
 
     void setShadowsEnabled(bool enabled) { m_shadowsEnabled = enabled; }
+
+    // Screen-space ambient occlusion, which reads the depth buffer rather than
+    // the shaded normals. Worth turning off when a surface's geometry and its
+    // normals deliberately disagree, since it will shade the geometry.
+    void setSsaoEnabled(bool enabled);
+    bool getSsaoEnabled() const;
 
     // Shader reloading
     std::pair<bool, std::string> reloadShaders();
@@ -189,6 +216,7 @@ private:
     std::unique_ptr<MeshHandler> m_meshHandler;
     std::unique_ptr<InstanceHandler> m_instanceHandler;
     std::unique_ptr<RayVolumeHandler> m_rayVolumeHandler;
+    std::unique_ptr<CdlodHandler> m_cdlodHandler;
     std::unique_ptr<ShadowRenderer> m_shadowRenderer;
 
     // Render parameters for interpolation

@@ -4,9 +4,9 @@
 #include <iostream>
 #include "math/DekkerArithmetic.h"
 
-SSBOManager::SSBOManager(size_t maxEntries) 
-    : m_maxEntries(maxEntries), m_nextNewIndex(0) {
-    
+SSBOManager::SSBOManager(size_t maxEntries)
+    : m_maxEntries(maxEntries), m_nextNewIndex(0), m_meshTransforms(maxEntries) {
+
     // Create and initialize SSBO
     glGenBuffers(1, &m_ssbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_ssbo);
@@ -84,6 +84,12 @@ void SSBOManager::updateMeshTransform(
     double emissiveScalar,
     int32_t maskTextureUnit) {
     
+    if (index >= 0 && static_cast<size_t>(index) < m_maxEntries) {
+        m_meshTransforms[index] = MeshTransform{
+            position, velocity, orientation, angVelAxis, angVel,
+            centerOfRotation, scale, time};
+    }
+
     MeshData data{};
 
     // Convert position to Dekker number
@@ -108,4 +114,14 @@ void SSBOManager::updateMeshTransform(
     data.maskTextureUnit = maskTextureUnit;
 
     updateData(index, data);
+}
+
+const MeshTransform& SSBOManager::getMeshTransform(int index) const {
+    static const MeshTransform s_identity{};
+    if (index < 0 || static_cast<size_t>(index) >= m_maxEntries) {
+        std::cerr << "SSBOManager: Warning - invalid index " << index
+                  << " in getMeshTransform" << std::endl;
+        return s_identity;
+    }
+    return m_meshTransforms[index];
 }

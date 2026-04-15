@@ -7,6 +7,7 @@
 #include "MeshManager2D/MeshManager2D.h"
 #include "instanceHandler/InstanceHandler.h"
 #include "rayVolume/RayVolumeHandler.h"
+#include "cdlod/CdlodHandler.h"
 #include "shadowRenderer/ShadowRenderer.h"
 #include "utils/HashFunctions.h"
 #include <iostream>
@@ -46,6 +47,9 @@ GraphicsEngine::GraphicsEngine(
     // Create ray-volume handler (proxy-geometry volumetric effects)
     m_rayVolumeHandler = std::make_unique<RayVolumeHandler>(m_ssboManager.get());
 
+    // Create CDLOD handler (distance-subdivided cube-quadtree bodies)
+    m_cdlodHandler = std::make_unique<CdlodHandler>(m_ssboManager.get());
+
     // Create 2D mesh manager
     m_meshManager2D = std::make_unique<MeshManager2D>();
 
@@ -74,6 +78,7 @@ GraphicsEngine::~GraphicsEngine() {
     // These must be destroyed in reverse dependency order
     m_meshManager2D.reset();
     m_rayVolumeHandler.reset();
+    m_cdlodHandler.reset();
     m_instanceHandler.reset();
     m_shadowRenderer.reset();
     m_deferredRenderer.reset();
@@ -117,9 +122,14 @@ void GraphicsEngine::renderScene() {
         m_graphicsEngineBase->m_ditherStrength
     };
 
+    // Node selection for the CDLOD bodies, once for the whole frame: the shadow
+    // cascades and the G-buffer must draw the same selection, not two that
+    // disagree at a subdivision boundary.
+    m_cdlodHandler->update(frameParams);
+
     unsigned int shadowMapTextureArray = 0;
     std::vector<glm::dmat4> cascadeMatricesViewSpace;
-    
+
     if (m_shadowsEnabled) {
         // Render shadow map
         m_shadowRenderer->beginShadowPass(m_lightDirection, getCamPos(), getFrameNum());
@@ -137,6 +147,9 @@ void GraphicsEngine::renderScene() {
 
     // Render opaque instanced geometry to G-buffer
     m_instanceHandler->renderGeometry(frameParams);
+
+    // Render CDLOD bodies to G-buffer
+    m_cdlodHandler->renderGeometry(frameParams);
 
     // End geometry pass and do lighting pass
     m_deferredRenderer->endGeometryPassAndRenderLighting(
@@ -213,6 +226,8 @@ void GraphicsEngine::renderShadowPass() {
             depthParams, /*renderOpaque=*/true, /*renderTransparent=*/false);
 
         m_instanceHandler->renderDepth(depthParams);
+
+        m_cdlodHandler->renderDepth(depthParams);
     }
 }
 
@@ -331,6 +346,37 @@ void GraphicsEngine::setRayVolumeInstanceValues(std::weak_ptr<Geometry> geometry
 void GraphicsEngine::removeRayVolumeInstance(std::weak_ptr<Geometry> geometry,
                                              std::weak_ptr<Instance> instance) {
     m_rayVolumeHandler->removeInstance(geometry, instance);
+}
+
+void GraphicsEngine::setSsaoEnabled(bool enabled) {
+    SSAOSettings settings{m_deferredRenderer->getSSAOSettings()};
+    settings.enabled = enabled;
+    m_deferredRenderer->setSSAOSettings(settings);
+}
+
+bool GraphicsEngine::getSsaoEnabled() const {
+    return m_deferredRenderer->getSSAOSettings().enabled;
+}
+
+size_t GraphicsEngine::createCdlodSurface(const std::string& snippetPath) {
+    return m_cdlodHandler->createSurface(snippetPath);
+}
+
+size_t GraphicsEngine::createCdlodBody(int ssboIndex, const CdlodConfig& config,
+                                       size_t surfaceIndex) {
+    return m_cdlodHandler->createBody(ssboIndex, config, surfaceIndex);
+}
+
+void GraphicsEngine::removeCdlodBody(size_t bodyHandle) {
+    m_cdlodHandler->removeBody(bodyHandle);
+}
+
+void GraphicsEngine::setCdlodWireframe(bool wireframe) {
+    m_cdlodHandler->setWireframe(wireframe);
+}
+
+bool GraphicsEngine::getCdlodWireframe() const {
+    return m_cdlodHandler->getWireframe();
 }
 
 int GraphicsEngine::loadModel(
@@ -506,6 +552,7 @@ std::pair<bool, std::string> GraphicsEngine::reloadShaders() {
    auto [success3, error3] = m_deferredRenderer->reloadShaders();
    auto [success4, error4] = m_shadowRenderer->reloadShaders();
    auto [success5, error5] = m_rayVolumeHandler->reloadShaders();
+   auto [success6, error6] = m_cdlodHandler->reloadShaders();
 
    if (!success1) {
       allSuccess = false;
@@ -526,6 +573,10 @@ std::pair<bool, std::string> GraphicsEngine::reloadShaders() {
    if (!success5) {
       allSuccess = false;
       allErrors += "RayVolumeHandler: " + error5 + "\n";
+   }
+   if (!success6) {
+      allSuccess = false;
+      allErrors += "CdlodHandler: " + error6 + "\n";
    }
 
    return {allSuccess, allSuccess ?

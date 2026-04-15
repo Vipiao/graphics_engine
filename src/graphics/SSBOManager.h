@@ -32,6 +32,22 @@ struct MeshData {
 static_assert(sizeof(MeshData) == 144,
     "MeshData must match the 144-byte std430 layout in mesh_transform.glsl");
 
+// The transform arguments of the last updateMeshTransform for an index, kept at
+// the precision they were given at. MeshData itself is lossy -- position becomes
+// a Dekker float pair and everything else a plain float -- so a consumer that
+// has to reproduce the shader's transform on the CPU (LOD selection against the
+// same interpolated pose the vertex stage builds) reads it back from here.
+struct MeshTransform {
+    glm::dvec3 position{};
+    glm::dvec3 velocity{};
+    glm::dquat orientation{1.0, 0.0, 0.0, 0.0};
+    glm::dvec3 angVelAxis{0.0, 1.0, 0.0};
+    double angVel{};
+    glm::dvec3 centerOfRotation{};
+    glm::dvec3 scale{1.0};
+    uint64_t time{};
+};
+
 /**
  * @brief Manages a shared SSBO for mesh and instance transformation data
  * 
@@ -92,10 +108,23 @@ public:
         uint64_t time,
         double emissiveScalar = 1.0,
         int32_t maskTextureUnit = -1);
-    
+
+    /**
+     * @brief Transform last written to an index by updateMeshTransform
+     *
+     * Never reads back from the GPU; this is the value the caller supplied,
+     * remembered at full precision. An index that has not been written yet
+     * reads as the identity transform.
+     */
+    const MeshTransform& getMeshTransform(int index) const;
+
 private:
     GLuint m_ssbo;
     size_t m_maxEntries;
     size_t m_nextNewIndex;
     std::vector<int> m_availableIndices;
+    // Parallel to the SSBO contents, one entry per index. Only
+    // updateMeshTransform maintains it; updateData writes the raw struct and is
+    // not a transform, so it leaves this untouched.
+    std::vector<MeshTransform> m_meshTransforms;
 };
