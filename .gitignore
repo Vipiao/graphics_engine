@@ -1,0 +1,50 @@
+# CMake generated files
+CMakeLists.txt.user
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+CMakeUserPresets.json
+
+# Build directories
+/build/
+/bin/
+/out/
+/debug/
+/release/
+
+# Cache files
+.cache/
+cache-v2-*
+codemodel-v2-*
+cmakefiles-v1-*
+index-2025-*
+target-*
+*.json.blob
+
+# Binary files
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.o
+*.obj
+# EXCEPT: Allow 3D model .obj files in media directories
+!media/**/*.obj
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+.vs/
+
+notes_*.txt

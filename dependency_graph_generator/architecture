@@ -1,0 +1,162 @@
+Game::onFrame()
+│
+├─ GameBase::beginFrame()
+│  ├─ GraphicsEngine::beginFrame()
+│  └─ GameBase::prepareFrame()
+│     ├─ Calculate timeRemainder from current time
+│     ├─ GraphicsEngine::setRenderParameters(currentTimeStep, timeRemainder)
+│     └─ CharacterSubsystem::updateAllPreRender(frameNum)
+│        └─ For each Digibot:
+│           └─ Digibot::updatePreRender()
+│              └─ DigibotController::updatePreRender()
+│
+├─ Creative::processInputs()
+│  └─ Creative::processInputLogic()
+│     ├─ Handle crosshair visibility
+│     ├─ Handle keyboard shortcuts (G, M, N, H)
+│     │
+│     ├─ [Character Control Active]
+│     │  └─ DigibotPlayerController::update(controller, camPos, camOri, timeRemainder)
+│     │     ├─ Handle Z key lock state machine
+│     │     ├─ Process WASD movement input
+│     │     ├─ Process Q/E roll input
+│     │     ├─ Send inputs to Digibot::setMovementDirection() and setRollInput()
+│     │     ├─ Get interpolated character position/orientation
+│     │     ├─ Apply grid rotation if in FULL_LOCK mode
+│     │     ├─ Apply mouse rotation to view direction
+│     │     ├─ Digibot::setViewDirection()
+│     │     └─ Position camera in third-person view
+│     │
+│     ├─ [Free Camera Active]
+│     │  └─ FreeCameraController::update(deltaTime, camPos, camOri)
+│     │     ├─ Apply mouse look rotation
+│     │     ├─ Handle Q/E roll
+│     │     ├─ Adjust speed with C/V keys
+│     │     └─ Apply WASD/Space/Shift movement
+│     │
+│     ├─ Handle R key for radial menu
+│     ├─ RadialMenu::run() if visible
+│     │
+│     └─ Tool input capture (only if menu didn not consume):
+│        ├─ ColorTool::preRenderCallback(doTryCopy, doTryPaste)
+│        ├─ ModifyTool::preRenderCallback(doModify, doCancel)
+│        ├─ BuildTool::preRenderCallback(doCreate, doRemove)
+│        └─ CharacterSelectionTool::preRenderCallback(doToggle)
+│
+├─ GameBase::render()
+│  └─ GraphicsEngine::render()
+│     └─ Renders scene using interpolated transforms
+│
+└─ GameBase::endFrame()
+   ├─ GameBase::finalizeFrame()
+   │  ├─ Check if physics update needed (currentTime >= nextPhysicsTime)
+   │  ├─ Schedule physics job if needed
+   │  │  └─ JobManager::schedule(updatePhysics, HIGH_PRIORITY)
+   │  └─ JobManager::work(jobEndTime)
+   │     └─ Processes scheduled jobs including physics
+   └─ GraphicsEngine::endFrame()
+```
+
+---
+
+## Physics Job Execution (When Scheduled)
+```
+GameBase::updatePhysics(endTime)
+│
+├─ Call physics callbacks FIRST:
+│  └─ For each GameBase::Callback:
+│     └─ Game::onPhysicsUpdateComplete()
+│        └─ Creative::physics()
+│           │
+│           ├─ Force/speed tracking raycasts (if F or Z pressed):
+│           │  ├─ Get timeRemainder
+│           │  ├─ For each grid:
+│           │  │  ├─ Grid::getInterpolatedTransform(timeRemainder)
+│           │  │  ├─ Transform ray to interpolated grid space
+│           │  │  └─ Grid::intersectRay()
+│           │  └─ PhysicsEngine::applyForceAtPoint() if hit
+│           │
+│           ├─ Creative::applyDragForces()
+│           │  └─ For each RigidBody: apply drag forces
+│           │
+│           ├─ Update interaction sensor position
+│           │
+│           ├─ Get filtered grids from sensor
+│           │  └─ GridSubsystem::getGridsFromOverlaps(sensor)
+│           │
+│           ├─ ColorTool::onPhysicsUpdateComplete(interactionGrids)
+│           │  ├─ Get timeRemainder
+│           │  ├─ Raycast against interpolated grids
+│           │  └─ Grid::setColor() if paste
+│           │
+│           ├─ CharacterSelectionTool::onPhysicsUpdateComplete()
+│           │
+│           ├─ ModifyTool::onPhysicsUpdateComplete(interactionGrids)
+│           │  ├─ Get timeRemainder
+│           │  ├─ Raycast against interpolated grids
+│           │  ├─ Update marker positions
+│           │  └─ Grid::modifyCell() if modification triggered
+│           │
+│           ├─ BuildTool::onPhysicsUpdateComplete(interactionGrids)
+│           │  ├─ Get timeRemainder
+│           │  ├─ Raycast against interpolated grids
+│           │  ├─ Grid::addCell() if create
+│           │  ├─ Grid::removeCell() if remove
+│           │  └─ GameBase::scheduleGridSplitCheck() if needed
+│           │
+│           ├─ DigibotPlayerController::onPhysicsUpdateComplete(controller, grids, range)
+│           │  └─ If raycast needed for lock:
+│           │     ├─ Get timeRemainder
+│           │     ├─ Raycast against interpolated grids
+│           │     └─ DigibotController::setLockState() and setTargetGrid()
+│           │
+│           └─ Creative::applyDragForces() (second call)
+│
+├─ GridSubsystem::handlePendingSplits(endTime)
+│  └─ Returns true if needs more time
+│
+├─ PhysicsEngine::runUntil(endTime)
+│  ├─ Collision detection
+│  ├─ Constraint solving
+│  ├─ Integration (update all RigidBody positions/velocities)
+│  └─ Returns true if needs more time
+│
+├─ GridSubsystem::updateAllGraphics(camPos)
+│  └─ For each Grid:
+│     └─ Grid::updateGraphics(camPos)
+│
+├─ CharacterSubsystem::updateAllPhysicsComplete()
+│  └─ For each Digibot:
+│     └─ Digibot::updatePhysicsComplete()
+│        └─ DigibotController::updatePhysicsComplete()
+│           ├─ Process movement input
+│           ├─ Calculate target velocities
+│           ├─ Handle lock state (UNLOCKED/TRANSLATION_LOCK/FULL_LOCK)
+│           ├─ Update target grid tracking if locked
+│           └─ Apply forces/torques to RigidBody
+│
+└─ Clear m_physicsUpdateInProgress flag
+```
+
+---
+
+## Digibot Character Flow Summary
+```
+Per Frame:
+  Digibot::updatePreRender()
+    └─ Prepares interpolated visuals
+
+Input Processing:
+  DigibotPlayerController::update()
+    ├─ Captures keyboard/mouse input
+    ├─ Sends to Digibot (movement, roll, view direction)
+    └─ Positions camera
+
+Physics Callbacks:
+  DigibotPlayerController::onPhysicsUpdateComplete()
+    └─ Handles lock raycasting
+
+Physics Update:
+  Digibot::updatePhysicsComplete()
+    └─ DigibotController::updatePhysicsComplete()
+       └─ Applies forces based on inputs
