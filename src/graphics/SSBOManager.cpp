@@ -81,7 +81,8 @@ void SSBOManager::updateMeshTransform(
     int32_t normalTextureUnit,
     int32_t materialTextureUnit,
     uint64_t time,
-    double emissiveScalar) {
+    double emissiveScalar,
+    int32_t maskTextureUnit) {
     
     MeshData data{};
 
@@ -104,7 +105,7 @@ void SSBOManager::updateMeshTransform(
     data.normalTextureUnit = normalTextureUnit;
     data.materialTextureUnit = materialTextureUnit;
     data.emissiveScalar = static_cast<float>(emissiveScalar);
-    // padding is zero-initialized by default
+    data.maskTextureUnit = maskTextureUnit;
 
     updateData(index, data);
 }

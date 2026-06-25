@@ -21,7 +21,8 @@ struct MeshData {
     int32_t normalTextureUnit{};     // Offset=120, size= 4 bytes. (-1 means no textures)
     int32_t materialTextureUnit{};   // Offset=124, size= 4 bytes. (-1 means no textures)
     float emissiveScalar{};          // Offset=128, size= 4 bytes.
-    uint32_t padding[3]{};           // Offset=132, size=12 bytes. Padding to make total size 144 (divisible by 16)
+    int32_t maskTextureUnit{-1};     // Offset=132, size= 4 bytes. (-1 means no mask texture)
+    uint32_t padding[2]{};           // Offset=136, size= 8 bytes. Padding to make total size 144 (divisible by 16)
 }; // Make sure to pad so size is divisible by 16 because you have a vec4.
 #pragma pack(pop)
 
@@ -79,7 +80,8 @@ public:
         int32_t normalTextureUnit,
         int32_t materialTextureUnit,
         uint64_t time,
-        double emissiveScalar = 1.0);
+        double emissiveScalar = 1.0,
+        int32_t maskTextureUnit = -1);
     
 private:
     GLuint m_ssbo;

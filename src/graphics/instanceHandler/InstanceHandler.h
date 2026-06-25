@@ -31,7 +31,7 @@ struct InstanceData {
     int32_t colorTextureUnit;
     int32_t normalTextureUnit;
     int32_t materialTextureUnit;
-    uint32_t padding3;
+    int32_t maskTextureUnit;
 };
 
 /**
@@ -58,6 +58,7 @@ public:
     int m_colorTextureUnit{-1};
     int m_normalTextureUnit{-1};
     int m_materialTextureUnit{-1};
+    int m_maskTextureUnit{-1};
     uint32_t m_bufferIndex; // Index in geometry's instance buffer
     
     Instance() : m_uniqueId(s_nextInstanceId++), m_bufferIndex(0) {}
@@ -101,7 +102,8 @@ public:
     std::weak_ptr<Instance> addInstance(
         int meshIndex, int colorTextureUnit = -1, int normalTextureUnit = -1,
         int materialTextureUnit = -1,
-        const glm::dvec4& color = glm::dvec4(1.0, 1.0, 1.0, 1.0));
+        const glm::dvec4& color = glm::dvec4(1.0, 1.0, 1.0, 1.0),
+        int maskTextureUnit = -1);
     void removeInstance(std::weak_ptr<Instance> instance);
     void updateInstanceInBuffer(Instance* instance);
     
