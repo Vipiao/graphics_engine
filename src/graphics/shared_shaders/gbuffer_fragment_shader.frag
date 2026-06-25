@@ -16,67 +16,7 @@ flat in int vert_normalTextureUnit;
 in float vert_occlusionFactor;
 flat in int vert_materialTextureUnit;
 flat in float vert_emissiveScalar;
-
-vec3 rgb2hsv(vec3 rgb) {
-    float maxVal = max(max(rgb.r, rgb.g), rgb.b);
-    float minVal = min(min(rgb.r, rgb.g), rgb.b);
-    float delta = maxVal - minVal;
-    
-    vec3 hsv;
-    hsv.z = maxVal;
-    
-    if (maxVal > 0.0) {
-        hsv.y = delta / maxVal;
-    } else {
-        hsv.y = 0.0;
-    }
-    
-    if (delta == 0.0) {
-        hsv.x = 0.0;
-    } else if (maxVal == rgb.r) {
-        hsv.x = 60.0 * mod((rgb.g - rgb.b) / delta, 6.0);
-    } else if (maxVal == rgb.g) {
-        hsv.x = 60.0 * (2.0 + (rgb.b - rgb.r) / delta);
-    } else {
-        hsv.x = 60.0 * (4.0 + (rgb.r - rgb.g) / delta);
-    }
-    
-    hsv.x /= 360.0;
-    return hsv;
-}
-
-vec3 hsv2rgb(vec3 hsv) {
-    float h = hsv.x * 360.0;
-    float s = hsv.y;
-    float v = hsv.z;
-    
-    float c = v * s;
-    float x = c * (1.0 - abs(mod(h / 60.0, 2.0) - 1.0));
-    float m = v - c;
-    
-    vec3 rgb;
-    if (h < 60.0) rgb = vec3(c, x, 0.0);
-    else if (h < 120.0) rgb = vec3(x, c, 0.0);
-    else if (h < 180.0) rgb = vec3(0.0, c, x);
-    else if (h < 240.0) rgb = vec3(0.0, x, c);
-    else if (h < 300.0) rgb = vec3(x, 0.0, c);
-    else rgb = vec3(c, 0.0, x);
-    
-    return rgb + m;
-}
-
-vec4 applyHSVTransform(vec4 vertexColor, vec4 textureColor) {
-    vec3 vertHSV = rgb2hsv(vertexColor.rgb);
-    vec3 texHSV = rgb2hsv(textureColor.rgb);
-    
-    vec3 transformedHSV;
-    transformedHSV.x = mod(vertHSV.x + texHSV.x, 1.0);
-    transformedHSV.y = vertHSV.y * texHSV.y;
-    transformedHSV.z = vertHSV.z * texHSV.z;
-    float alpha = vertexColor.a * textureColor.a;
-
-    return vec4(hsv2rgb(transformedHSV), alpha);
-}
+flat in int vert_maskTextureUnit;
 
 void main() {
    // Get normal from normal map or use vertex normal
@@ -89,20 +29,25 @@ void main() {
       normal = normalize(vert_TBN * normalMap);
    }
 
-   // Get object color from texture or use vertex color
+   // Get base albedo from texture or vertex color (no HSV shift)
    vec3 objectColor;
    float alpha = 1.0;
    if (vert_colorTextureUnit >= 0) {
       vec4 textureColor = texture(u_textures[vert_colorTextureUnit], vert_uv);
-      vec4 result = applyHSVTransform(vert_color, textureColor);
-      objectColor = result.rgb;
-      alpha = result.a;
+      objectColor = textureColor.rgb;
+      alpha = textureColor.a;
    } else {
       objectColor = vert_color.rgb;
       alpha = vert_color.a;
    }
 
    if(alpha < 1./255.) discard;
+
+   // Apply color mask: blend between unmodified albedo and albedo tinted by vert_color
+   float mask = (vert_maskTextureUnit >= 0)
+      ? texture(u_textures[vert_maskTextureUnit], vert_uv).r
+      : 1.0;
+   vec3 finalColor = mix(objectColor, objectColor * vert_color.rgb, mask);
 
    // Calculate emissive strength
    float emissiveStrength;
@@ -116,7 +61,7 @@ void main() {
    }
 
    // Output to G-buffer
-   gAlbedo = vec4(objectColor, 0.0);  // A: metallic factor (hardcoded to 0 for now)
+   gAlbedo = vec4(finalColor, 0.0);  // A: metallic factor (hardcoded to 0 for now)
    gNormal = vec4(normal * 0.5 + 0.5, 0.5);  // Encode normal to [0,1], A: roughness
    gMaterial = vec4(emissiveStrength, 1.0, vert_occlusionFactor, alpha);  // R: emissive, G: geometry flag, B: occlusion, A: alpha
 }
