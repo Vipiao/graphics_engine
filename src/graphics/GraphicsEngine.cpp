@@ -212,7 +212,8 @@ void GraphicsEngine::updateMeshTransform(
     int32_t normalTextureUnit,
     int32_t materialTextureUnit,
     uint64_t physicsTimeStep,
-    double emissiveScalar)
+    double emissiveScalar,
+    int32_t maskTextureUnit)
 {
     m_ssboManager->updateMeshTransform(
         meshId,
@@ -227,7 +228,8 @@ void GraphicsEngine::updateMeshTransform(
         normalTextureUnit,
         materialTextureUnit,
         physicsTimeStep,
-        emissiveScalar
+        emissiveScalar,
+        maskTextureUnit
     );
 }
 

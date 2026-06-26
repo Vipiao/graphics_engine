@@ -69,7 +69,8 @@ public:
         int32_t normalTextureUnit = -1,
         int32_t materialTextureUnit = -1,
         uint64_t physicsTimeStep = 0,
-        double emissiveScalar = 1.0
+        double emissiveScalar = 1.0,
+        int32_t maskTextureUnit = -1
     );
     
     void removeMesh(int meshId);

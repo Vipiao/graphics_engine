@@ -132,6 +132,7 @@ void MouseHandler::update() {
 }
 
 void MouseHandler::setMouseLock(bool lockMouse) {
+   //lockMouse = false;
    if (lockMouse) {
       glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
    } else {
