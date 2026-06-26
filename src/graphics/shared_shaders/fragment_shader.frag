@@ -38,7 +38,7 @@ void main() {
    if (vert_colorTextureUnit >= 0) {
       vec4 textureColor = texture(u_textures[vert_colorTextureUnit], vert_uv);
       objectColor = textureColor.rgb;
-      alpha = textureColor.a;
+      alpha = textureColor.a * vert_color.a;
    } else {
       objectColor = vert_color.rgb;
       alpha = vert_color.a;
