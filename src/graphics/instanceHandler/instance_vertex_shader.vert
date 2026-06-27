@@ -106,11 +106,10 @@ mat3 rotationMatrix(float angle, vec3 unitAxis) {
     );
 }
 
-// Dekker subtraction: result = a - b  
+// Dekker subtraction: result = a - b
 vec3 dekkerSubtract(vec3 aHigh, vec3 aLow, vec3 bHigh, vec3 bLow) {
-    vec3 r = aHigh - bHigh;
-    vec3 error;
-    // Use the larger magnitude for better precision
+    precise vec3 r = aHigh - bHigh;
+    precise vec3 error;
     for(int i = 0; i < 3; i++) {
         if(abs(aHigh[i]) > abs(bHigh[i])) {
             error[i] = aHigh[i] - r[i] - bHigh[i] + aLow[i] - bLow[i];
@@ -118,7 +117,7 @@ vec3 dekkerSubtract(vec3 aHigh, vec3 aLow, vec3 bHigh, vec3 bLow) {
             error[i] = -bHigh[i] - r[i] + aHigh[i] + aLow[i] - bLow[i];
         }
     }
-    return r + error; // Convert back to single precision
+    return r + error;
 }
 
 mat3 calculatePhysicsOrientation(vec4 baseOrientation, vec4 angVel, float deltaTime) {
