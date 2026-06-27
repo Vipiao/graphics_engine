@@ -134,6 +134,13 @@ public:
 
    Button m_esc{ GLFW_KEY_ESCAPE, this };
    Button m_capsLock{ GLFW_KEY_CAPS_LOCK, this };
+
+   Button m_insert  { GLFW_KEY_INSERT,    this };
+   Button m_delete  { GLFW_KEY_DELETE,    this };
+   Button m_home    { GLFW_KEY_HOME,      this };
+   Button m_end     { GLFW_KEY_END,       this };
+   Button m_pageUp  { GLFW_KEY_PAGE_UP,   this };
+   Button m_pageDown{ GLFW_KEY_PAGE_DOWN, this };
 protected:
    Mode m_mode{};
    std::fstream m_file{};

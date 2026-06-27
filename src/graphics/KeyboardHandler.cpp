@@ -67,8 +67,14 @@ KeyboardHandler::KeyboardHandler(GLFWwindow* window, Mode mode, const std::files
    m_buttons.push_back(&m_down);
 
    m_buttons.push_back(&m_esc);
-
    m_buttons.push_back(&m_capsLock);
+
+   m_buttons.push_back(&m_insert);
+   m_buttons.push_back(&m_delete);
+   m_buttons.push_back(&m_home);
+   m_buttons.push_back(&m_end);
+   m_buttons.push_back(&m_pageUp);
+   m_buttons.push_back(&m_pageDown);
 }
 
 KeyboardHandler::~KeyboardHandler() {
