@@ -195,8 +195,8 @@ void GraphicsEngine::setRenderParameters(uint64_t interpolationTimeStep, double 
     m_interpolationTimeRemainder = timeRemainder;
 }
 
-int GraphicsEngine::createMesh() {
-    return m_meshHandler->addMesh();
+void GraphicsEngine::createMesh(int ssboIndex) {
+    m_meshHandler->addMesh(ssboIndex);
 }
 
 void GraphicsEngine::updateMeshTransform(
@@ -251,14 +251,12 @@ int GraphicsEngine::loadModel(
     int* outNormalTextureUnit,
     int* outMaterialTextureUnit)
 {
-    int meshId = createMesh();
-    if (meshId < 0) {
-        std::cerr << "Failed to create mesh for model: " << modelPath << std::endl;
-        return -1;
-    }
-    
-    if (loadModelIntoMesh(meshId, modelPath, ignoreTextureCoordinates).empty()) {
-        removeMesh(meshId);
+    int ssboIndex = m_ssboManager->allocateIndex();
+    createMesh(ssboIndex);
+
+    if (loadModelIntoMesh(ssboIndex, modelPath, ignoreTextureCoordinates).empty()) {
+        removeMesh(ssboIndex);
+        m_ssboManager->deallocateIndex(ssboIndex);
         return -1;
     }
     
@@ -316,7 +314,7 @@ int GraphicsEngine::loadModel(
     glm::dvec3 centerOfRotation(0.0, 0.0, 0.0);
     
     updateMeshTransform(
-        meshId,
+        ssboIndex,
         position,
         velocity,
         orientation,
@@ -330,8 +328,8 @@ int GraphicsEngine::loadModel(
         0,                          // Default physics time step
         1.0                         // Default emissive scalar
     );
-    
-    return meshId;
+
+    return ssboIndex;
 }
 
 std::vector<uint32_t> GraphicsEngine::loadModelIntoMesh(

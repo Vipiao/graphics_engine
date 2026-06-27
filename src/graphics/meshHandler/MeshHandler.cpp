@@ -92,18 +92,14 @@ MeshHandler::~MeshHandler() {
    }
 }
 
-int MeshHandler::addMesh() {
-   int meshIndex = m_ssboManager->allocateIndex();
-
+void MeshHandler::addMesh(int ssboIndex) {
    // Initialize MeshInfo for this mesh.
    MeshInfo info;
    info.numTriangles = 0;
    info.nextTriangleId = 0;
 
-   // Store MeshInfo in the map.
-   m_meshIndexToMeshInfo[meshIndex] = info;
-
-   return meshIndex;
+   // Store MeshInfo keyed on the externally-allocated SSBO index.
+   m_meshIndexToMeshInfo[ssboIndex] = info;
 }
 
 std::vector<uint32_t> MeshHandler::appendTrianglesToMesh(
@@ -471,7 +467,6 @@ void MeshHandler::removeMesh(int meshIndex) {
 
    if (info.numTriangles == 0) {
       m_meshIndexToMeshInfo.erase(meshIndex);
-      m_ssboManager->deallocateIndex(meshIndex);
       return;
    }
 
@@ -551,7 +546,7 @@ void MeshHandler::removeMesh(int meshIndex) {
    m_vertexData.resize(m_vertexData.size() - numVerticesToRemove);
    m_totalTriangles -= info.numTriangles;
    m_meshIndexToMeshInfo.erase(meshIndex);
-   m_ssboManager->deallocateIndex(meshIndex);
+   // SSBO deallocation is the caller's responsibility — MeshHandler does not own SSBO indices.
 }
 
 void MeshHandler::render(
@@ -751,13 +746,14 @@ void MeshHandler::unitTest() {
          std::vector<glm::dvec3> tangents(numVertices, glm::dvec3(1.0, 0.0, 0.0));
          std::vector<glm::dvec2> uvs(numVertices, glm::dvec2(0.0, 0.0));
 
-         // Add a mesh
-         int meshId = addMesh();
-         appendTrianglesToMesh(meshId, &vertices, &normals, &tangents, &uvs);
+         // Allocate SSBO index externally
+         int ssboIndex = m_ssboManager->allocateIndex();
+         addMesh(ssboIndex);
+         appendTrianglesToMesh(ssboIndex, &vertices, &normals, &tangents, &uvs);
 
          // Create and add TestMeshData instance
          TestMeshData testMesh;
-         testMesh.meshId = meshId;
+         testMesh.meshId = ssboIndex;
          for (size_t j = 0; j < vertices.size() / 3; ++j) {
             testMesh.triangleIndices.push_back(static_cast<uint32_t>(j));
          }
@@ -766,10 +762,11 @@ void MeshHandler::unitTest() {
          // Remove a mesh
          // Randomly choose a mesh to remove
          int indexToRemove = rand() % testMeshes.size();
-         int meshIdToRemove = testMeshes[indexToRemove].meshId;
+         int ssboIndexToRemove = testMeshes[indexToRemove].meshId;
 
-         // Call removeMesh
-         removeMesh(meshIdToRemove);
+         // Call removeMesh, then release the SSBO index (owned externally in new design)
+         removeMesh(ssboIndexToRemove);
+         m_ssboManager->deallocateIndex(ssboIndexToRemove);
 
          // Remove the mesh from testMeshes
          testMeshes.erase(testMeshes.begin() + indexToRemove);

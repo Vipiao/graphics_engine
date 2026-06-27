@@ -51,7 +51,7 @@ public:
     void setTriangleRenderMode(bool useTriangles) { m_graphicsEngineBase->setTriangleRenderMode(useTriangles); }
     bool getTriangleRenderMode() { return m_graphicsEngineBase->getTriangleRenderMode(); }
     
-    int createMesh();
+    void createMesh(int ssboIndex);
 
     // Render parameter setting - for interpolation between states
     void setRenderParameters(uint64_t interpolationTimeStep, double timeRemainder);

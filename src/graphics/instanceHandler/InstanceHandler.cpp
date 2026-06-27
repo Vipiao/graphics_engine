@@ -18,10 +18,10 @@ Geometry::~Geometry() {
 }
 
 std::weak_ptr<Instance> Geometry::addInstance(
-    int meshIndex, int colorTextureUnit, int normalTextureUnit,
+    int ssboIndex, int colorTextureUnit, int normalTextureUnit,
     int materialTextureUnit, const glm::dvec4& color, int maskTextureUnit) {
     auto instance = std::make_shared<Instance>();
-    instance->m_meshIndex = meshIndex;
+    instance->m_ssboIndex = ssboIndex;
     instance->m_colorTextureUnit = colorTextureUnit;
     instance->m_normalTextureUnit = normalTextureUnit;
     instance->m_materialTextureUnit = materialTextureUnit;
@@ -121,7 +121,7 @@ InstanceData Geometry::createInstanceData(Instance* instance) {
     data.localScale = glm::vec3(instance->m_localScale);
     data.padding2 = 0.0f;
     data.color = glm::vec4(instance->m_color);
-    data.meshIndex = instance->m_meshIndex;
+    data.ssboIndex = instance->m_ssboIndex;
     data.colorTextureUnit = instance->m_colorTextureUnit;
     data.normalTextureUnit = instance->m_normalTextureUnit;
     data.materialTextureUnit = instance->m_materialTextureUnit;
@@ -288,7 +288,7 @@ void InstanceHandler::setupGeometryOpenGL(Geometry* geometry,
     glVertexAttribDivisor(7, 1);
     
     // Mesh index for SSBO lookup (location 8)
-    glVertexAttribIPointer(8, 1, GL_INT, sizeof(InstanceData), (void*)offsetof(InstanceData, meshIndex));
+    glVertexAttribIPointer(8, 1, GL_INT, sizeof(InstanceData), (void*)offsetof(InstanceData, ssboIndex));
     glEnableVertexAttribArray(8);
     glVertexAttribDivisor(8, 1);
     

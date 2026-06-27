@@ -27,7 +27,7 @@ struct InstanceData {
     glm::vec3 localScale;        // Local scale
     float padding2;
     glm::vec4 color;             // Instance color
-    int32_t meshIndex;           // Index into SSBO for geometry world transform
+    int32_t ssboIndex;           // Index into SSBO for geometry world transform
     int32_t colorTextureUnit;
     int32_t normalTextureUnit;
     int32_t materialTextureUnit;
@@ -54,7 +54,7 @@ public:
     glm::dquat m_localOrientation{1.0, 0.0, 0.0, 0.0};
     glm::dvec3 m_localScale{1.0};
     glm::dvec4 m_color{1.0, 1.0, 1.0, 1.0};
-    int m_meshIndex{-1};        // SSBO index for world transform
+    int m_ssboIndex{-1};        // SSBO index for world transform
     int m_colorTextureUnit{-1};
     int m_normalTextureUnit{-1};
     int m_materialTextureUnit{-1};
@@ -100,7 +100,7 @@ public:
     double getDepthCompression() const { return m_depthCompression; }
     bool getAlphaBlending() const { return m_enableAlphaBlending; }
     std::weak_ptr<Instance> addInstance(
-        int meshIndex, int colorTextureUnit = -1, int normalTextureUnit = -1,
+        int ssboIndex, int colorTextureUnit = -1, int normalTextureUnit = -1,
         int materialTextureUnit = -1,
         const glm::dvec4& color = glm::dvec4(1.0, 1.0, 1.0, 1.0),
         int maskTextureUnit = -1);

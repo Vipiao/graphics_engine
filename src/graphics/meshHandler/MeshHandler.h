@@ -132,7 +132,7 @@ public:
    explicit MeshHandler(size_t maxTriangles, SSBOManager* ssboManager);
    ~MeshHandler();
 
-   int addMesh();
+   void addMesh(int ssboIndex);
    std::vector<uint32_t> appendTrianglesToMesh(
       int meshIndex, const std::vector<glm::dvec3>* vertices,
       const std::vector<glm::dvec3>* normals,
