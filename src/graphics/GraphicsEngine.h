@@ -48,6 +48,7 @@ public:
     void beginFrame();
     void render();
     void endFrame();
+    void setWindowPos(int xPos, int yPos) { m_graphicsEngineBase->setWindowPos(xPos, yPos); }
     void toggleFullscreen() { m_graphicsEngineBase->toggleFullscreen(); }
     void setTriangleRenderMode(bool useTriangles) { m_graphicsEngineBase->setTriangleRenderMode(useTriangles); }
     bool getTriangleRenderMode() { return m_graphicsEngineBase->getTriangleRenderMode(); }

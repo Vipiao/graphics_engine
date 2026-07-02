@@ -23,6 +23,7 @@ public:
    GraphicsEngineBase(const GraphicsEngineBase&) = delete;
    GraphicsEngineBase& operator= (const GraphicsEngineBase&) = delete;
 
+   void setWindowPos(int xPos, int yPos);
    void setSwapInterval(int swapInterval);
    
    // Frame control methods

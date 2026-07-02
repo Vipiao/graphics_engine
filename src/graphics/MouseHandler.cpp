@@ -72,7 +72,9 @@ MouseHandler::MouseHandler(GLFWwindow* window, Mode mode, const std::filesystem:
    glfwSetCursorPosCallback(m_window, cursorPositionCallback);
    glfwSetMouseButtonCallback(m_window, mouseButtonCallback);
    glfwSetScrollCallback(m_window, scrollCallback);
-   glfwSetCursorPos(m_window, 0, 0); // Prevents jumping of mouse when first entering the window.
+   if (glfwGetPlatform() != GLFW_PLATFORM_WAYLAND) { // Wayland cannot warp the cursor.
+      glfwSetCursorPos(m_window, 0, 0); // Prevents jumping of mouse when first entering the window.
+   }
 
    //
 }

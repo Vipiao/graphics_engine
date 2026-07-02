@@ -7,6 +7,10 @@
 #include <filesystem>
 #include <algorithm>
 
+static void glfwErrorCallback(int error, const char* description) {
+   std::cout << "GLFW error " << error << ": " << description << std::endl;
+}
+
 // Request discrete GPU on Windows (NVIDIA Optimus / AMD PowerXpress)
 // Theoretically windows is supposed to detect this itself, but experiments
 // shows it often fails at this, especially for openGL applications.
@@ -73,10 +77,17 @@ GraphicsEngineBase::GraphicsEngineBase(Mode mode, const std::filesystem::path& f
 
    // glfw: initialize and configure
    // ------------------------------
-   #ifdef __linux__
-      glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
-   #endif
+   glfwSetErrorCallback(glfwErrorCallback);
    glfwInit();
+
+   const char* platformName{ "unknown" };
+   switch (glfwGetPlatform()) {
+      case GLFW_PLATFORM_WAYLAND: platformName = "Wayland"; break;
+      case GLFW_PLATFORM_X11:     platformName = "X11";     break;
+      case GLFW_PLATFORM_WIN32:   platformName = "Win32";   break;
+      case GLFW_PLATFORM_COCOA:   platformName = "Cocoa";   break;
+   }
+   std::cout << "GLFW platform: " << platformName << std::endl;
    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -106,9 +117,6 @@ GraphicsEngineBase::GraphicsEngineBase(Mode mode, const std::filesystem::path& f
    glfwSetWindowUserPointer(m_window, this);
    glfwSetFramebufferSizeCallback(m_window, framebufferSizeCallback);
    glfwSetWindowPosCallback(m_window, windowPosCallback);
-
-   //
-   glfwSetWindowPos(m_window, 1500, 700);
 
    // glad: load all OpenGL function pointers
    // ---------------------------------------
@@ -167,6 +175,14 @@ void GraphicsEngineBase::applyInitialFramebufferSize() {
    for (auto& callback : m_framebufferCallbacks) {
       callback(fbWidth, fbHeight);
    }
+}
+
+void GraphicsEngineBase::setWindowPos(int xPos, int yPos) {
+   // Wayland does not let clients position windows; ignore the request.
+   if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) {
+      return;
+   }
+   glfwSetWindowPos(m_window, xPos, yPos);
 }
 
 void GraphicsEngineBase::setSwapInterval(int swapInterval) {
@@ -235,7 +251,11 @@ void GraphicsEngineBase::toggleFullscreen() {
       glfwSetWindowMonitor(m_window, nullptr, m_windowedPosX, m_windowedPosY,
          m_windowedWidth, m_windowedHeight, 0);
    } else {
-      glfwGetWindowPos(m_window, &m_windowedPosX, &m_windowedPosY);
+      m_windowedPosX = 0;
+      m_windowedPosY = 0;
+      if (glfwGetPlatform() != GLFW_PLATFORM_WAYLAND) { // Wayland has no window positions.
+         glfwGetWindowPos(m_window, &m_windowedPosX, &m_windowedPosY);
+      }
       glfwGetWindowSize(m_window, &m_windowedWidth, &m_windowedHeight);
       GLFWmonitor* monitor{ getCurrentMonitor() };
       const GLFWvidmode* mode{ glfwGetVideoMode(monitor) };
@@ -272,6 +292,17 @@ int GraphicsEngineBase::getFrameRate() {
 }
 
 GLFWmonitor* GraphicsEngineBase::getCurrentMonitor() {
+   // When fullscreen, the window's monitor is authoritative.
+   if (GLFWmonitor* fullscreenMonitor{ glfwGetWindowMonitor(m_window) }) {
+      return fullscreenMonitor;
+   }
+
+   // Wayland does not expose window positions, so the center-based pick
+   // below is impossible; fall back to the primary monitor.
+   if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) {
+      return glfwGetPrimaryMonitor();
+   }
+
    int windowX, windowY, windowWidth, windowHeight;
    glfwGetWindowPos(m_window, &windowX, &windowY);
    glfwGetWindowSize(m_window, &windowWidth, &windowHeight);
