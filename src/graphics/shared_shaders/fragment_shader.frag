@@ -4,7 +4,7 @@ out vec4 FragColor;
 
 uniform vec3 u_cameraPositionHigh;
 uniform vec3 u_cameraPositionLow;
-uniform sampler2D u_textures[32];
+uniform sampler2D u_textures[MAX_TEXTURE_UNITS];
 uniform uint u_time;
 uniform float u_timeRemainder;
 uniform vec3 u_lightDir;

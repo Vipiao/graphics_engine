@@ -21,6 +21,20 @@ std::string ShaderProgram::loadTextFileFromPath(std::string path) {
    return text;
 }
 
+std::string ShaderProgram::injectEngineDefines(std::string code) {
+   std::string defines{
+      "#define MAX_TEXTURE_UNITS " + std::to_string(s_maxTextureUnits) + "\n" };
+   size_t versionPos{ code.find("#version") };
+   if (versionPos == std::string::npos) {
+      return defines + code;
+   }
+   size_t versionLineEnd{ code.find('\n', versionPos) };
+   if (versionLineEnd == std::string::npos) {
+      return code + "\n" + defines;
+   }
+   return code.substr(0, versionLineEnd + 1) + defines + code.substr(versionLineEnd + 1);
+}
+
 void ShaderProgram::printWithLineNumbers(std::string code) {
    std::cout << "Code:\n" << std::endl;
    int lineNum{ 1 };
@@ -73,6 +87,7 @@ void ShaderProgram::loadGeometryShaderFromPath(std::string geometryCodePath) {
 
 void ShaderProgram::loadVertexShader(std::string vertexCode) {
    // vertex shader
+   vertexCode = injectEngineDefines(vertexCode);
    m_vertexShader = glCreateShader(GL_VERTEX_SHADER);
    const char* vertCode = vertexCode.c_str();
    glShaderSource(m_vertexShader, 1, &vertCode, NULL);
@@ -92,6 +107,7 @@ void ShaderProgram::loadVertexShader(std::string vertexCode) {
 
 void ShaderProgram::loadFragmentShader(std::string fragmentCode) {
    // fragment shader
+   fragmentCode = injectEngineDefines(fragmentCode);
    m_fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
    const char* fragCode = fragmentCode.c_str();
    glShaderSource(m_fragmentShader, 1, &fragCode, NULL);
@@ -111,6 +127,7 @@ void ShaderProgram::loadFragmentShader(std::string fragmentCode) {
 
 void ShaderProgram::loadTessellationControlShader(std::string tessContrCode) {
    // Tesselation control shader.
+   tessContrCode = injectEngineDefines(tessContrCode);
    m_tessellationControlShader = glCreateShader(GL_TESS_CONTROL_SHADER);
    const char* tessCode = tessContrCode.c_str();
    glShaderSource(m_tessellationControlShader, 1, &tessCode, NULL);
@@ -130,6 +147,7 @@ void ShaderProgram::loadTessellationControlShader(std::string tessContrCode) {
 
 void ShaderProgram::loadTessellationEvaluationShader(std::string tessEvalCode) {
    // Tesselation evaluation shader.
+   tessEvalCode = injectEngineDefines(tessEvalCode);
    m_tessellationEvaluationShader = glCreateShader(GL_TESS_EVALUATION_SHADER);
    const char* tessCode = tessEvalCode.c_str();
    glShaderSource(m_tessellationEvaluationShader, 1, &tessCode, NULL);
@@ -149,6 +167,7 @@ void ShaderProgram::loadTessellationEvaluationShader(std::string tessEvalCode) {
 
 void ShaderProgram::loadGeometryShader(std::string geometryCode) {
    // Geometry shader.
+   geometryCode = injectEngineDefines(geometryCode);
    m_geometryShader = glCreateShader(GL_GEOMETRY_SHADER);
    const char* geomCode = geometryCode.c_str();
    glShaderSource(m_geometryShader, 1, &geomCode, NULL);

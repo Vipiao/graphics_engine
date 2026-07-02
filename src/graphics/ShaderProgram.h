@@ -6,7 +6,17 @@
 #include <utility>
 
 class ShaderProgram {
+public:
+   // Maximum number of texture units supported by the shaders. Injected into every shader
+   // as "#define MAX_TEXTURE_UNITS", so shaders must declare
+   // "uniform sampler2D u_textures[MAX_TEXTURE_UNITS];" instead of a literal size.
+   // The GL spec only guarantees GL_MAX_TEXTURE_IMAGE_UNITS >= 16.
+   static constexpr int s_maxTextureUnits{ 32 };
+
 private:
+   // Inserts the engine "#define"s (see s_maxTextureUnits) after the "#version" line.
+   static std::string injectEngineDefines(std::string code);
+
    unsigned int m_vertexShader{ 0 };
    unsigned int m_fragmentShader{ 0 };
    unsigned int m_tessellationControlShader{ 0 };

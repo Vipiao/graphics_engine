@@ -418,9 +418,11 @@ void InstanceHandler::renderGeometryHelper(
     // Bind all textures
     for (const auto& texture : m_textureManager.m_textures) {
         // Debug check: ensure texture unit is within shader array bounds
-        if (texture.textureUnit >= 32) {
+        if (texture.textureUnit >= ShaderProgram::s_maxTextureUnits) {
             throw std::runtime_error("InstanceHandler texture unit " + std::to_string(texture.textureUnit) +
-                                   " exceeds shader array size (32) for texture: " + texture.path);
+                                   " exceeds shader array size (" +
+                                   std::to_string(ShaderProgram::s_maxTextureUnits) +
+                                   ") for texture: " + texture.path);
         }
         glActiveTexture(GL_TEXTURE0 + texture.textureUnit);
         glBindTexture(GL_TEXTURE_2D, texture.textureId);

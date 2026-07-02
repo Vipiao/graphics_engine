@@ -183,7 +183,7 @@ protected:
    unsigned int m_vao{};
    int m_totalTriangles{ 0 };
    size_t m_maxTriangles{};
-   size_t m_maxTextures{ 16 };
+   size_t m_maxTextures{ ShaderProgram::s_maxTextureUnits };
    std::vector<Vertex> m_vertexData;
    std::map<int64_t, MeshInfo> m_meshIndexToMeshInfo;
    SSBOManager* m_ssboManager;

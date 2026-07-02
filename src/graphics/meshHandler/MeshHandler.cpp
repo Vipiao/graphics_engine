@@ -668,7 +668,9 @@ void MeshHandler::renderGeometryHelper(
 
 MeshHandler::Texture MeshHandler::createTexture(std::string texturePath) {
    if (m_textures.size() >= m_maxTextures) {
-      throw std::runtime_error("Exceeded the maximum number of textures.");
+      throw std::runtime_error(
+         "MeshHandler: cannot create texture \"" + texturePath +
+         "\": maximum number of textures (" + std::to_string(m_maxTextures) + ") reached");
    }
    unsigned int texture;
    glGenTextures(1, &texture);

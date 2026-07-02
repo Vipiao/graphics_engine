@@ -1,7 +1,9 @@
 // TextureManagerBase.cpp
 #include "TextureManagerBase.h"
 #include "STBImageLoader.h"
+#include "ShaderProgram.h"
 #include <iostream>
+#include <stdexcept>
 
 TextureManagerBase::TextureManagerBase() : m_nextTextureUnit(0) {
 }
@@ -21,6 +23,14 @@ int TextureManagerBase::createTexture(const std::string& path) {
         }
     }
     
+    // Fail early: all texture units must fit in the shaders' u_textures array.
+    if (m_nextTextureUnit >= ShaderProgram::s_maxTextureUnits) {
+        throw std::runtime_error(
+            "TextureManagerBase: cannot create texture \"" + path +
+            "\": maximum number of textures (" +
+            std::to_string(ShaderProgram::s_maxTextureUnits) + ") reached");
+    }
+
     // Load new texture
     GLuint textureId = loadTextureFromFile(path);
     if (textureId == 0) {

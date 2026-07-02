@@ -4,7 +4,7 @@ layout(location = 0) out vec4 gAlbedo;    // RGB: albedo, A: metallic
 layout(location = 1) out vec4 gNormal;    // RGB: world normal, A: roughness
 layout(location = 2) out vec4 gMaterial;  // R: emissive, G: texture flags, B: occlusion, A: alpha
 
-uniform sampler2D u_textures[32];
+uniform sampler2D u_textures[MAX_TEXTURE_UNITS];
 
 in vec3 vert_normal;
 in mat3 vert_TBN;
