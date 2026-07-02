@@ -33,7 +33,8 @@ public:
    glm::dmat4 getViewMatrix() const;
    glm::dmat4 getProjectionMatrix() const;
    void checkGLErrors();
-   void swapBuffersAndPoll();
+   void swapBuffers();
+   void toggleFullscreen();
    void incrementFrame() { m_frameNum++; }
    void setTriangleRenderMode(bool useTriangles);
    bool getTriangleRenderMode();
@@ -51,6 +52,7 @@ public:
    //glm::dquat m_camOri{ glm::sqrt(2.) / 2., -glm::sqrt(2.) / 2.,0,0 }; // 90% rotation around negative x axis.
    glm::dquat m_camOri{ 1,0,0,0 }; // Unit orientation.
    uint64_t m_frameNum{ 0 };
+   int m_swapInterval{ 1 }; // 0 = vsync off, 1 = vsync on.
    double m_fieldOfView{ glm::radians(120.0) }; // Horizontal field of view.
    // Mouse.
    MouseHandler* m_mouseHandler{ nullptr };
@@ -64,9 +66,17 @@ protected:
    static void framebufferSizeCallback(GLFWwindow* window, int width, int height);
    static void windowPosCallback(GLFWwindow* window, int xpos, int ypos);
    int getFrameRate();
+   GLFWmonitor* getCurrentMonitor();
 
    bool m_renderTriangleMode{ false };
    bool m_windowOnTop{ false };
+
+   // Windowed geometry captured by toggleFullscreen() when entering
+   // fullscreen; only valid while fullscreen.
+   int m_windowedPosX{};
+   int m_windowedPosY{};
+   int m_windowedWidth{};
+   int m_windowedHeight{};
 
    glm::dvec3 m_camPosPrev{};
 

@@ -141,6 +141,8 @@ public:
    Button m_end     { GLFW_KEY_END,       this };
    Button m_pageUp  { GLFW_KEY_PAGE_UP,   this };
    Button m_pageDown{ GLFW_KEY_PAGE_DOWN, this };
+
+   Button m_f11{ GLFW_KEY_F11, this };
 protected:
    Mode m_mode{};
    std::fstream m_file{};

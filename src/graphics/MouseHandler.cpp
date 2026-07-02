@@ -135,9 +135,19 @@ void MouseHandler::setMouseLock(bool lockMouse) {
    //lockMouse = false;
    if (lockMouse) {
       glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+      // Raw motion delivers device-rate deltas, bypassing OS cursor
+      // acceleration and compositor event batching.
+      if (glfwRawMouseMotionSupported()) {
+         glfwSetInputMode(m_window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+      }
    } else {
+      glfwSetInputMode(m_window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
       glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
    }
+   // Switching cursor modes teleports the reported position; resync so the
+   // next frame reads a zero delta instead of a spike.
+   glfwGetCursorPos(m_window, &m_mousePos.x, &m_mousePos.y);
+   m_mousePosPrev = m_mousePos;
    m_mouseIsLocked = lockMouse;
 }
 

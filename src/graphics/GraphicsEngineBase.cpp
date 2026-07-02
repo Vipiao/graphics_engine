@@ -119,11 +119,7 @@ GraphicsEngineBase::GraphicsEngineBase(Mode mode, const std::filesystem::path& f
    }
 
    // Clobal configuration.
-#ifdef V_SYNC_OFF
-   setSwapInterval(0);
-#else
-   setSwapInterval(1);
-#endif
+   setSwapInterval(m_swapInterval);
    glEnable(GL_DEPTH_TEST);
    glEnable(GL_CULL_FACE);
    //glPolygonMode (GL_FRONT_AND_BACK, GL_LINE);
@@ -174,6 +170,7 @@ void GraphicsEngineBase::applyInitialFramebufferSize() {
 }
 
 void GraphicsEngineBase::setSwapInterval(int swapInterval) {
+   m_swapInterval = swapInterval;
    glfwSwapInterval(swapInterval);
 }
 
@@ -183,6 +180,9 @@ void GraphicsEngineBase::clearScreen() {
 }
 
 void GraphicsEngineBase::updateInput() {
+   // Must run glfwPollEvents after clearScreen() so the vsync throttle is behind us;
+   // polling later in the frame samples the cursor at a drifting point.
+   glfwPollEvents();
    m_mouseHandler->update();
    m_keyboardHandler->update();
 }
@@ -225,9 +225,28 @@ void GraphicsEngineBase::checkGLErrors() {
    }
 }
 
-void GraphicsEngineBase::swapBuffersAndPoll() {
+void GraphicsEngineBase::swapBuffers() {
    glfwSwapBuffers(m_window);
-   glfwPollEvents();
+}
+
+void GraphicsEngineBase::toggleFullscreen() {
+   if (glfwGetWindowMonitor(m_window)) {
+      // Currently fullscreen: restore the windowed position and size.
+      glfwSetWindowMonitor(m_window, nullptr, m_windowedPosX, m_windowedPosY,
+         m_windowedWidth, m_windowedHeight, 0);
+   } else {
+      glfwGetWindowPos(m_window, &m_windowedPosX, &m_windowedPosY);
+      glfwGetWindowSize(m_window, &m_windowedWidth, &m_windowedHeight);
+      GLFWmonitor* monitor{ getCurrentMonitor() };
+      const GLFWvidmode* mode{ glfwGetVideoMode(monitor) };
+      if (!mode) {
+         std::cout << "Warning: Failed to get video mode for fullscreen toggle." << std::endl;
+         return;
+      }
+      glfwSetWindowMonitor(m_window, monitor, 0, 0, mode->width, mode->height, mode->refreshRate);
+   }
+   // The swap interval is not preserved across monitor changes on all platforms.
+   setSwapInterval(m_swapInterval);
 }
 
 void GraphicsEngineBase::setTriangleRenderMode(bool useTriangles) {
@@ -248,6 +267,11 @@ int GraphicsEngineBase::getFrameRate() {
       return 0; // Return 0 if there is no window.
    }
 
+   const GLFWvidmode* mode = glfwGetVideoMode(getCurrentMonitor());
+   return mode ? mode->refreshRate : 0;
+}
+
+GLFWmonitor* GraphicsEngineBase::getCurrentMonitor() {
    int windowX, windowY, windowWidth, windowHeight;
    glfwGetWindowPos(m_window, &windowX, &windowY);
    glfwGetWindowSize(m_window, &windowWidth, &windowHeight);
@@ -270,7 +294,6 @@ int GraphicsEngineBase::getFrameRate() {
       }
    }
 
-   const GLFWvidmode* mode = glfwGetVideoMode(windowMonitor);
-   return mode ? mode->refreshRate : 0;
+   return windowMonitor;
 }
 

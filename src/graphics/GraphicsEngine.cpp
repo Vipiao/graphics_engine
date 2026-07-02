@@ -81,7 +81,7 @@ void GraphicsEngine::render() {
 
 void GraphicsEngine::endFrame() {
     m_graphicsEngineBase->checkGLErrors();
-    m_graphicsEngineBase->swapBuffersAndPoll();
+    m_graphicsEngineBase->swapBuffers();
     m_graphicsEngineBase->incrementFrame();
 }
 
