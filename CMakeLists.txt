@@ -76,6 +76,10 @@ target_include_directories(graphics PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/include"
 )
+# stb_image is only used inside STBImageLoader.cpp, so it stays PRIVATE.
+target_include_directories(graphics PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/stb"
+)
 if(NOT TARGET assimp::assimp)
     target_include_directories(graphics PRIVATE ${ASSIMP_INCLUDE_DIRS})
 endif()

@@ -141,6 +141,13 @@ mat3 buildTBNMatrix(mat3 orientation, vec3 normal, vec3 tangent) {
 }
 
 void main() {
+    // Fully transparent instances are hidden from the camera but still cast shadows:
+    // the depth pass uses its own vertex shader which never reads instanceColor.
+    if (instanceColor.a < 1.0 / 255.0) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // Outside clip volume, vertex is culled
+        return;
+    }
+
     // Get geometry world transform from SSBO using instance's meshIndex
     MeshData meshData = meshDataBuffer[meshIndex];
     
