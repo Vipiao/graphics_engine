@@ -95,11 +95,29 @@ def sanitize_node_id(name):
         sanitized = 'n' + sanitized
     return sanitized or 'unknown'
 
-def analyze_dependencies(directory, skip_folders=None):
-    """Analyze dependencies between C++ files."""
-    cpp_files = find_cpp_files(directory, skip_folders)
+def analyze_dependencies(directories, skip_folders=None, skip_files=None):
+    """Analyze dependencies between C++ files across one or more source trees."""
+    if skip_files is None:
+        skip_files = []
+    cpp_files = []
+    for directory in directories:
+        cpp_files.extend(find_cpp_files(directory, skip_folders))
+    # Drop skipped modules (matched by filename stem, so TimeHandler skips
+    # TimeHandler.h and TimeHandler.cpp in every scanned tree)
+    cpp_files = [f for f in cpp_files if Path(f).stem not in skip_files]
     dependencies = defaultdict(set)
     all_nodes = set()
+
+    # Nodes are merged by filename stem; warn if the same file name (with the
+    # same extension) exists in more than one tree, since those get merged.
+    seen = {}
+    for file_path in cpp_files:
+        key = Path(file_path).name
+        if key in seen:
+            print(f"Warning: duplicate file name merged into one node: "
+                  f"{seen[key]} and {file_path}")
+        else:
+            seen[key] = file_path
     
     # First pass: collect all possible nodes
     for file_path in cpp_files:
@@ -449,38 +467,53 @@ def generate_graphml(nodes, dependencies, output_file, detect_cycles=False, hide
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines))
 
+# Scanned when no folders are given: the full stack this repo belongs to.
+DEFAULT_FOLDERS = ['../src', '../../../03_utils/utils/src']
+
 def main():
     parser = argparse.ArgumentParser(description='Generate dependency graph for C++ files with cycle grouping')
-    parser.add_argument('folder', help='Folder to analyze (relative to script location)')
+    parser.add_argument('folders', nargs='*', default=[],
+                        help='Folders to analyze (relative to script location). '
+                             'Defaults to the full stack: ' + ' '.join(DEFAULT_FOLDERS))
     parser.add_argument('--detect-cycles', action='store_true', help='Detect and report dependency cycles')
     parser.add_argument('--hide-internal-edges', action='store_true', help='Hide arrows between nodes within the same group')
     parser.add_argument('--skip-folders', nargs='*', default=[], help='Folders to skip (paths relative to the main folder)')
+    parser.add_argument('--skip-files', nargs='*', default=[],
+                        help='Modules to leave out of the graph, by filename stem (e.g. TimeHandler)')
     
     args = parser.parse_args()
     
     # Get script directory
     script_dir = Path(__file__).parent.absolute()
     
-    # Resolve target directory relative to script
-    target_dir = script_dir / args.folder
-    
-    if not target_dir.exists():
-        print(f"Error: Directory {target_dir} does not exist")
+    # Resolve target directories relative to script
+    folder_args = args.folders if args.folders else DEFAULT_FOLDERS
+    target_dirs = []
+    for folder in folder_args:
+        target_dir = script_dir / folder
+        if not target_dir.is_dir():
+            if args.folders:
+                print(f"Error: Directory {target_dir} does not exist")
+                sys.exit(1)
+            print(f"Warning: skipping missing default folder {target_dir}")
+            continue
+        target_dirs.append(target_dir)
+
+    if not target_dirs:
+        print("Error: no folders to analyze")
         sys.exit(1)
-    
-    if not target_dir.is_dir():
-        print(f"Error: {target_dir} is not a directory")
-        sys.exit(1)
-    
-    print(f"Analyzing C++ files in: {target_dir}")
+
+    print("Analyzing C++ files in: " + ", ".join(str(d) for d in target_dirs))
     if args.skip_folders:
         print(f"Skipping folders: {args.skip_folders}")
+    if args.skip_files:
+        print(f"Skipping files: {args.skip_files}")
     
     # Analyze dependencies
-    nodes, dependencies = analyze_dependencies(target_dir, args.skip_folders)
+    nodes, dependencies = analyze_dependencies(target_dirs, args.skip_folders, args.skip_files)
     
     if not nodes:
-        print("No C++ files found in the specified directory")
+        print("No C++ files found in the specified directories")
         sys.exit(1)
     
     print(f"Found {len(nodes)} files")
