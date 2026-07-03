@@ -8,12 +8,10 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glad/glad.h>
 #include "../TextureManagerBase.h"
-#include "../SSBOManager.h"
-#include "../AssimpLoader.h"
 #include "../ShaderProgram.h"
-#include "../STBImageLoader.h"
 
 // Forward declarations
+class SSBOManager;
 class Geometry;
 class Instance;
 

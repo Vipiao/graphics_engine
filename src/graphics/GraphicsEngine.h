@@ -2,19 +2,20 @@
 #pragma once
 
 #include "GraphicsEngineBase.h"
-#include "GraphicsCallbacks.h"
+// MeshHandler.h is needed for the nested MeshHandler::Texture return type.
 #include "meshHandler/MeshHandler.h"
-#include "deferredRenderer/DeferredRenderer.h"
-#include "AssimpLoader.h"
-#include "MeshManager2D/MeshManager2D.h"
-#include "instanceHandler/InstanceHandler.h"
-#include "SSBOManager.h"
-#include "shadowRenderer/ShadowRenderer.h"
 #include <memory>
 #include <string>
 #include <vector>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
+
+// Subsystems are held by pointer — include their headers where you use them.
+class DeferredRenderer;
+class MeshManager2D;
+class InstanceHandler;
+class SSBOManager;
+class ShadowRenderer;
 
 class GraphicsEngine {
 public:

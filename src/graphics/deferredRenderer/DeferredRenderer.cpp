@@ -1,6 +1,6 @@
 #include "DeferredRenderer.h"
-#include "../../math/DekkerArithmetic.h"
-#include "../../utils/HashFunctions.h"
+#include "math/DekkerArithmetic.h"
+#include "utils/HashFunctions.h"
 #include <iostream>
 #include <stdexcept>
 #include <limits>

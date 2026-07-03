@@ -2,7 +2,7 @@
 #include "SSBOManager.h"
 #include <stdexcept>
 #include <iostream>
-#include "../math/DekkerArithmetic.h"
+#include "math/DekkerArithmetic.h"
 
 SSBOManager::SSBOManager(size_t maxEntries) 
     : m_maxEntries(maxEntries), m_nextNewIndex(0) {

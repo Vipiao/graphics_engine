@@ -1,8 +1,8 @@
 #include "MeshHandler.h"
 
 #include "../STBImageLoader.h"
-#include "../../math/DekkerArithmetic.h"
-#include "../../utils/HashFunctions.h"
+#include "math/DekkerArithmetic.h"
+#include "utils/HashFunctions.h"
 
 #include <iterator>
 #include <iostream>

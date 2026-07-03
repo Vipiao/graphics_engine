@@ -37,6 +37,15 @@ elseif(UNIX)
     message(STATUS "Configuring for Linux")
 endif()
 
+# Shared utils library (utils/math/debug + vendored glm). The default assumes
+# the sibling repo layout; override UTILS_DIR to point elsewhere. When a game
+# pulls in both, the guard keeps utils from being added twice.
+set(UTILS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../03_utils/utils" CACHE PATH
+    "Path to the shared utils library repo")
+if(NOT TARGET utils)
+    add_subdirectory(${UTILS_DIR} ${CMAKE_BINARY_DIR}/utils-build)
+endif()
+
 # Find packages using CMake's package finder
 find_package(assimp REQUIRED)
 find_package(glfw3 REQUIRED)
@@ -60,12 +69,12 @@ add_library(GraphicsEngine::graphics ALIAS graphics)
 
 # PUBLIC include dirs propagate to anything that links the engine, so the
 # game never has to spell out the engine's folder layout.
+# glm comes from the utils library (single vendored copy for the whole stack).
 target_include_directories(graphics PUBLIC
     #"${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/glad/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}/external/glm"
 )
 if(NOT TARGET assimp::assimp)
     target_include_directories(graphics PRIVATE ${ASSIMP_INCLUDE_DIRS})
@@ -83,9 +92,11 @@ else()
 endif()
 
 # Link deps. glfw/OpenGL are PUBLIC because the engine's public API likely
-# exposes them; assimp is PRIVATE since it's only used inside the loaders.
+# exposes them; utils is PUBLIC because its headers (and glm) are part of the
+# engine's interface; assimp is PRIVATE since it's only used inside the loaders.
 target_link_libraries(graphics
     PUBLIC
+        Utils::utils
         glfw
         ${OPENGL_LIBRARIES}
     PRIVATE

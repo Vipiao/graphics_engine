@@ -1,7 +1,13 @@
 // GraphicsEngine.cpp
 #include "GraphicsEngine.h"
 #include "GraphicsEngineBase.h"
-#include "../utils/HashFunctions.h"
+#include "GraphicsCallbacks.h"
+#include "SSBOManager.h"
+#include "deferredRenderer/DeferredRenderer.h"
+#include "MeshManager2D/MeshManager2D.h"
+#include "instanceHandler/InstanceHandler.h"
+#include "shadowRenderer/ShadowRenderer.h"
+#include "utils/HashFunctions.h"
 #include <iostream>
 #include <filesystem>
 

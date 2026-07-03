@@ -1,7 +1,7 @@
 #include "ShadowRenderer.h"
 #include <iostream>
 #include <glm/gtc/matrix_transform.hpp>
-#include "../../utils/HashFunctions.h"
+#include "utils/HashFunctions.h"
 #include <stdexcept>
 
 ShadowRenderer::ShadowRenderer() {

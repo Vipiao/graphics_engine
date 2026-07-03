@@ -1,7 +1,9 @@
 // InstanceHandler.cpp
 #include "InstanceHandler.h"
 #include "../ShaderProgram.h"
-#include "../../math/DekkerArithmetic.h"
+#include "../SSBOManager.h"
+#include "../AssimpLoader.h"
+#include "math/DekkerArithmetic.h"
 #include <iostream>
 #include <algorithm>
 #include <set>
