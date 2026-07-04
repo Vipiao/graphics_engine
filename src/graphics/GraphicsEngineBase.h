@@ -63,6 +63,10 @@ public:
    // Panini projection strengths. 0 = standard rectilinear (off), 1 = max distortion.
    double m_paniniHorizontal{ 0.0 };
    double m_paniniVertical{ 0.0 };
+   // Blue-noise dither amplitude for the post-processing pass, in color
+   // units. 0 = off; the default of 1.0 / 255.0 covers exactly one 8-bit
+   // quantization step, dissolving banding without visible grain.
+   double m_ditherStrength{ 1.0 / 255.0 };
    // Mouse.
    MouseHandler* m_mouseHandler{ nullptr };
    KeyboardHandler* m_keyboardHandler{ nullptr };

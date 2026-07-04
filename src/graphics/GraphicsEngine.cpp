@@ -103,7 +103,8 @@ void GraphicsEngine::renderScene() {
         getCamPos(),
         m_graphicsEngineBase->m_paniniHorizontal,
         m_graphicsEngineBase->m_paniniVertical,
-        m_graphicsEngineBase->getPaniniFitScale()
+        m_graphicsEngineBase->getPaniniFitScale(),
+        m_graphicsEngineBase->m_ditherStrength
     };
 
     unsigned int shadowMapTextureArray = 0;
@@ -144,8 +145,9 @@ void GraphicsEngine::renderScene() {
     m_instanceHandler->render(
         frameParams, /*renderOpaque=*/false, /*renderTransparent=*/true);
 
-    // Resample the finished scene to the screen with the Panini distortion
-    m_deferredRenderer->renderSceneToScreen(frameParams);
+    // Post-processing pass: resample the finished scene to the screen
+    // (Panini distortion + blue-noise dither).
+    m_deferredRenderer->renderPostProcessing(frameParams);
 
     // Render 2D overlay
     float aspectRatio = getScreenWidth() / (float)getScreenHeight();

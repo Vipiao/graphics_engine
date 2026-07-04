@@ -38,9 +38,10 @@ public:
         unsigned int shadowMapTexture = 0,
         bool shadowsEnabled = false);
 
-    // Final pass: resample the finished scene color to the default framebuffer,
-    // applying the Panini distortion (a plain copy when both strengths are 0).
-    void renderSceneToScreen(const FrameRenderParams& params);
+    // Final post-processing pass: resample the finished scene color to the
+    // default framebuffer, applying the Panini distortion (a plain copy when
+    // both strengths are 0) and blue-noise dithering of the 8-bit quantization.
+    void renderPostProcessing(const FrameRenderParams& params);
     
     // SSAO configuration
     SSAOSettings& getSSAOSettings() { return m_ssaoSettings; }
@@ -71,18 +72,24 @@ private:
 
     // Shaders
     ShaderProgram m_lightingShaderProgram{};
-    ShaderProgram m_paniniShaderProgram{};
-    
+    ShaderProgram m_postProcessShaderProgram{};
+
     // Lighting pass resources
     unsigned int m_lightingVAO{};      // For fullscreen triangle
-    
+
+    // Tileable blue noise threshold map shared by the lighting pass (sample
+    // jitter) and the post-processing pass (dithering).
+    static constexpr int s_blueNoiseSize{ 64 };
+    unsigned int m_blueNoiseTexture{};
+
     // SSAO
     SSAOSettings m_ssaoSettings{};
     std::vector<glm::vec3> m_ssaoKernel{};
-    
+
     // Private methods
     void cleanupGBuffer();
     void generateSSAOKernel();
+    void setBlueNoiseOffset(unsigned int programID, uint64_t frame);
     
     // Prevent copying
     DeferredRenderer(const DeferredRenderer&) = delete;

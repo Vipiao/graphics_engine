@@ -47,6 +47,9 @@ public:
     double& getPaniniVertical() { return getGraphicsEngineBase()->m_paniniVertical; }
     // Derived output zoom of the Panini post pass; pass to screen-anchor projection.
     double getPaniniFitScale() { return getGraphicsEngineBase()->getPaniniFitScale(); }
+    // Blue-noise dither amplitude of the post-processing pass, in color
+    // units. 0 = off; 1.0 / 255.0 covers one 8-bit quantization step.
+    double& getDitherStrength() { return getGraphicsEngineBase()->m_ditherStrength; }
     MouseHandler* getMouseHandler() { return getGraphicsEngineBase()->m_mouseHandler; }
     KeyboardHandler* getKeyboardHandler() { return getGraphicsEngineBase()->m_keyboardHandler; }
 

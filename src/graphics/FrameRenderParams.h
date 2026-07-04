@@ -20,4 +20,7 @@ struct FrameRenderParams {
    // Output zoom keeping every Panini source lookup inside the rendered
    // frustum. Owned by GraphicsEngineBase::getPaniniFitScale(); 1 = no zoom.
    double paniniFitScale{ 1.0 };
+   // Blue-noise dither amplitude added in the post-processing pass before the
+   // final 8-bit quantization, in color units. 0 = off; 1/255 covers one step.
+   double ditherStrength{ 0.0 };
 };

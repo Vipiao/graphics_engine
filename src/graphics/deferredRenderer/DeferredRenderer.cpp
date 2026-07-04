@@ -1,6 +1,8 @@
 #include "DeferredRenderer.h"
+#include "math/BlueNoise.h"
 #include "math/DekkerArithmetic.h"
 #include "utils/HashFunctions.h"
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <limits>
@@ -13,20 +15,34 @@ DeferredRenderer::DeferredRenderer() {
     m_lightingShaderProgram.loadFragmentShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/deferredRenderer/lighting_fragment_shader.frag");
     m_lightingShaderProgram.linkShaders();
 
-    // Load Panini post pass shaders (fullscreen triangle vertex shader is shared)
-    m_paniniShaderProgram.loadVertexShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/deferredRenderer/lighting_vertex_shader.vert");
-    m_paniniShaderProgram.loadFragmentShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/deferredRenderer/panini_post_fragment_shader.frag");
-    m_paniniShaderProgram.linkShaders();
+    // Load post-processing pass shaders (fullscreen triangle vertex shader is shared)
+    m_postProcessShaderProgram.loadVertexShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/deferredRenderer/lighting_vertex_shader.vert");
+    m_postProcessShaderProgram.loadFragmentShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/deferredRenderer/post_processing_fragment_shader.frag");
+    m_postProcessShaderProgram.linkShaders();
 
     // Setup lighting VAO (for fullscreen triangle)
     glGenVertexArrays(1, &m_lightingVAO);
     // No vertex buffer needed - geometry generated in vertex shader
+
+    // Tileable blue noise threshold map, generated once (deterministic) and
+    // shared by the lighting pass (sample jitter) and the post-processing
+    // pass (dithering). Fetched with texelFetch, so filtering is irrelevant.
+    std::vector<uint8_t> blueNoise{ BlueNoise::generate(s_blueNoiseSize) };
+    glGenTextures(1, &m_blueNoiseTexture);
+    glBindTexture(GL_TEXTURE_2D, m_blueNoiseTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, s_blueNoiseSize, s_blueNoiseSize, 0,
+                 GL_RED, GL_UNSIGNED_BYTE, blueNoise.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
     generateSSAOKernel();
 }
 
 DeferredRenderer::~DeferredRenderer() {
     cleanupGBuffer();
+    glDeleteTextures(1, &m_blueNoiseTexture);
     glDeleteVertexArrays(1, &m_lightingVAO);
 }
 
@@ -58,6 +74,24 @@ void DeferredRenderer::generateSSAOKernel() {
         sample *= static_cast<float>(scale);
         m_ssaoKernel.push_back(sample);
     }
+}
+
+// Toroidal shift of the blue noise tile for this frame. The R2 sequence
+// (powers of the plastic number's reciprocal) is a 2D low-discrepancy
+// sequence: consecutive frames land far apart in the tile and any run of
+// frames covers it evenly, so per-pixel noise averages out over time without
+// visible scrolling or a short repeat cycle.
+void DeferredRenderer::setBlueNoiseOffset(unsigned int programID, uint64_t frame) {
+    GLint offsetLoc = glGetUniformLocation(programID, "u_blueNoiseOffset");
+    if (offsetLoc == -1) {
+        return;
+    }
+    double frameDouble{ static_cast<double>(frame) };
+    double x{ std::fmod(frameDouble * 0.7548776662466927, 1.0) };
+    double y{ std::fmod(frameDouble * 0.5698402909980532, 1.0) };
+    glUniform2i(offsetLoc,
+                static_cast<int>(x * s_blueNoiseSize),
+                static_cast<int>(y * s_blueNoiseSize));
 }
 
 void DeferredRenderer::setSSAOSettings(const SSAOSettings& settings) {
@@ -133,11 +167,13 @@ void DeferredRenderer::setupGBuffer(unsigned int width, unsigned int height) {
         throw std::runtime_error("G-buffer framebuffer not complete!");
     }
 
-    // Setup scene color texture (lighting output + forward passes). Linear
-    // filtering so the Panini post pass resamples smoothly.
+    // Setup scene color texture (lighting output + forward passes). Float
+    // format keeps lighting gradients continuous until the post-processing
+    // pass quantizes them to the 8-bit framebuffer (with dithering). Linear
+    // filtering so the Panini resample interpolates smoothly.
     glGenTextures(1, &m_sceneColor);
     glBindTexture(GL_TEXTURE_2D, m_sceneColor);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -248,11 +284,13 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
     if (ssaoBiasLoc != -1) {
         glUniform1f(ssaoBiasLoc, static_cast<float>(m_ssaoSettings.bias));
     }
-     
-    GLint lightingTimeRemainderLoc = glGetUniformLocation(lightingProgramID, "u_timeRemainder");
-    if (lightingTimeRemainderLoc != -1) {
-        glUniform1f(lightingTimeRemainderLoc, static_cast<float>(params.timeRemainder));
-    }
+
+    // Blue noise drives the temporal sample jitter (SSAO kernel rotation,
+    // shadow PCF offsets, SSR ray start offsets).
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_2D, m_blueNoiseTexture);
+    glUniform1i(glGetUniformLocation(lightingProgramID, "u_blueNoise"), 5);
+    setBlueNoiseOffset(lightingProgramID, params.frame);
 
     // Set inverse projection matrix for position reconstruction
     glm::mat4 projectionFloat = glm::mat4(params.projection);
@@ -373,7 +411,7 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
     glBindFramebuffer(GL_FRAMEBUFFER, m_sceneForwardFBO);
 }
 
-void DeferredRenderer::renderSceneToScreen(const FrameRenderParams& params) {
+void DeferredRenderer::renderPostProcessing(const FrameRenderParams& params) {
     // Skip if the scene target is not initialized (e.g., window minimized)
     if (!m_gbufferInitialized) {
         return;
@@ -382,35 +420,45 @@ void DeferredRenderer::renderSceneToScreen(const FrameRenderParams& params) {
     glViewport(0, 0, m_gbufferWidth, m_gbufferHeight);
     glDisable(GL_DEPTH_TEST);
 
-    m_paniniShaderProgram.use();
-    unsigned int paniniProgramID = m_paniniShaderProgram.getID();
+    m_postProcessShaderProgram.use();
+    unsigned int postProcessProgramID = m_postProcessShaderProgram.getID();
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_sceneColor);
-    glUniform1i(glGetUniformLocation(paniniProgramID, "u_sceneColor"), 0);
+    glUniform1i(glGetUniformLocation(postProcessProgramID, "u_sceneColor"), 0);
 
     // Projection is needed to convert between screen and tan-space coordinates
-    GLint projectionLoc = glGetUniformLocation(paniniProgramID, "u_projection");
+    GLint projectionLoc = glGetUniformLocation(postProcessProgramID, "u_projection");
     if (projectionLoc != -1) {
         glm::mat4 projectionFloat{ params.projection };
         glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projectionFloat));
     }
 
     // Panini strengths (0 = off, the shader falls back to a plain copy)
-    GLint paniniHorizontalLoc = glGetUniformLocation(paniniProgramID, "u_paniniHorizontal");
+    GLint paniniHorizontalLoc = glGetUniformLocation(postProcessProgramID, "u_paniniHorizontal");
     if (paniniHorizontalLoc != -1) {
         glUniform1f(paniniHorizontalLoc, static_cast<float>(params.paniniHorizontal));
     }
-    GLint paniniVerticalLoc = glGetUniformLocation(paniniProgramID, "u_paniniVertical");
+    GLint paniniVerticalLoc = glGetUniformLocation(postProcessProgramID, "u_paniniVertical");
     if (paniniVerticalLoc != -1) {
         glUniform1f(paniniVerticalLoc, static_cast<float>(params.paniniVertical));
     }
 
     // Fit scale: zooms the output just enough that the distorted image fills
     // the screen without sampling outside the rendered frustum.
-    GLint fitScaleLoc = glGetUniformLocation(paniniProgramID, "u_paniniFitScale");
+    GLint fitScaleLoc = glGetUniformLocation(postProcessProgramID, "u_paniniFitScale");
     if (fitScaleLoc != -1) {
         glUniform1f(fitScaleLoc, static_cast<float>(params.paniniFitScale));
+    }
+
+    // Blue noise dither of the final 8-bit quantization.
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, m_blueNoiseTexture);
+    glUniform1i(glGetUniformLocation(postProcessProgramID, "u_blueNoise"), 1);
+    setBlueNoiseOffset(postProcessProgramID, params.frame);
+    GLint ditherStrengthLoc = glGetUniformLocation(postProcessProgramID, "u_ditherStrength");
+    if (ditherStrengthLoc != -1) {
+        glUniform1f(ditherStrengthLoc, static_cast<float>(params.ditherStrength));
     }
 
     // Render fullscreen triangle
@@ -424,12 +472,14 @@ void DeferredRenderer::renderSceneToScreen(const FrameRenderParams& params) {
 
 std::pair<bool, std::string> DeferredRenderer::reloadShaders() {
    auto [lightingSuccess, lightingError] = m_lightingShaderProgram.reloadShaders();
-   auto [paniniSuccess, paniniError] = m_paniniShaderProgram.reloadShaders();
+   auto [postProcessSuccess, postProcessError] = m_postProcessShaderProgram.reloadShaders();
 
-   bool success = lightingSuccess && paniniSuccess;
+   bool success = lightingSuccess && postProcessSuccess;
    std::string errors;
    if (!lightingSuccess) { errors += "DeferredRenderer lighting shader: " + lightingError + "\n"; }
-   if (!paniniSuccess) { errors += "DeferredRenderer panini shader: " + paniniError + "\n"; }
+   if (!postProcessSuccess) {
+      errors += "DeferredRenderer post-processing shader: " + postProcessError + "\n";
+   }
 
    return {success, success ?
       "DeferredRenderer shaders reloaded successfully" : errors};

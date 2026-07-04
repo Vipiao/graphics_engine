@@ -17,14 +17,30 @@ uniform mat4 u_projection;
 uniform mat4 u_inverseProjection;
 uniform vec2 u_screenSize;
 uniform bool u_ssaoEnabled;
-uniform float u_timeRemainder;
 uniform float u_ssaoRadius;
 uniform float u_ssaoBias;
 uniform vec3 u_ssaoSamples[32];
+// Tileable blue noise threshold map, shared with the post-processing pass.
+uniform sampler2D u_blueNoise;
+// Per-frame toroidal shift of the noise tile (R2 sequence, computed CPU side).
+uniform ivec2 u_blueNoiseOffset;
 
 in vec2 texCoord;
 
 vec3 debugColor = vec3(0.);
+
+// Tiled blue noise in [0, 1). shift picks a decorrelated stream by reading a
+// distant texel of the same tile; u_blueNoiseOffset animates it per frame.
+float blueNoise(ivec2 shift) {
+   ivec2 noiseSize = textureSize(u_blueNoise, 0);
+   ivec2 coord = (ivec2(gl_FragCoord.xy) + u_blueNoiseOffset + shift) % noiseSize;
+   return texelFetch(u_blueNoise, coord, 0).r;
+}
+
+// Blue noise jitter in [-1, 1].
+float blueNoiseJitter(ivec2 shift) {
+   return blueNoise(shift) * 2.0 - 1.0;
+}
 
 vec3 reconstructPosition(vec2 screenCoord, float depth) {
    // Convert screen coordinates to NDC
@@ -63,13 +79,11 @@ float calculateSSAO(vec3 fragPos, vec3 normal) {
    float distanceFromCamera = length(fragPos);
    float scaledRadius = u_ssaoRadius * (1.0 + distanceFromCamera * 0.01);
    
-   // Generate random tangent vector that rotates each frame
-   vec2 timeOffset = vec2(u_timeRemainder * 0.1, u_timeRemainder * 0.13);
-   vec3 randomVec = vec3(
-      fract(sin(dot(texCoord + timeOffset, vec2(12.9898, 78.233))) * 43758.5453),
-      fract(sin(dot(texCoord + timeOffset + vec2(0.1, 0.1), vec2(12.9898, 78.233))) * 43758.5453),
-      0.0
-   );
+   // Rotate the sample kernel per pixel with a blue noise angle: neighboring
+   // pixels get maximally different rotations, so undersampling shows up as
+   // fine grain instead of banded artifacts.
+   float angle = blueNoise(ivec2(0, 0)) * 6.283185307179586;
+   vec3 randomVec = vec3(cos(angle), sin(angle), 0.0);
    
    // Create TBN matrix
    vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
@@ -123,41 +137,9 @@ float calculateSSAO(vec3 fragPos, vec3 normal) {
    return occlusion;
 }
 
-// Simple hash function for per-pixel randomness
-float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-}
-
-vec2 hash2(vec2 p) {
-    return fract(sin(vec2(dot(p, vec2(127.1, 211.7)), dot(p, vec2(169.5, 183.3)))) * 43758.5453123);
-}
-
-vec3 hash3(vec2 p) {
-    return fract(sin(vec3(
-        dot(p, vec2(127.1, 311.7)),
-        dot(p, vec2(269.5, 183.3)),
-        dot(p, vec2(419.2, 371.9))
-    )) * 43758.5453123);
-}
-
-// Generate temporal jitter value in [-1, 1] range
-float temporalJitter(vec2 timeScales) {
-    vec2 screenPos = gl_FragCoord.xy;
-    vec2 timeOffset = vec2(u_timeRemainder * timeScales.x, u_timeRemainder * timeScales.y);
-    vec2 jitterSeed = screenPos + timeOffset;
-    return (hash(jitterSeed) - 0.5) * 2.0; // [-1, 1] range
-}
-
-vec3 temporalJitter3d(vec2 timeScales, float seed) {
-    vec2 screenPos = gl_FragCoord.xy;
-    vec2 timeOffset = vec2(u_timeRemainder * timeScales.x, u_timeRemainder * timeScales.y);
-    vec2 jitterSeed = screenPos + timeOffset + vec2(seed * 17.3, seed * 23.7);
-    return (hash3(jitterSeed) - 0.5) * 2.0; // [-1, 1] range
-}
-
 int selectCascade(vec3 fragPos) {
     // Add temporal jitter to fragPos to reduce aliasing
-    float jitter = temporalJitter(vec2(0.11, 0.13));
+    float jitter = blueNoiseJitter(ivec2(13, 41));
     fragPos *= (1.0 + abs(jitter) * 0.25);
     
     // Calculate distance from camera (Euclidean distance in view space)
@@ -228,11 +210,9 @@ float calculateShadow(
     // Get current fragment depth in light space
     float currentDepth = projCoords.z;
 
-    // Temporal jittering: add per-pixel random offsets that vary over time
-    vec2 screenPos = gl_FragCoord.xy;
-    vec2 timeOffset = vec2(u_timeRemainder * 0.3, u_timeRemainder * 0.7); // Different time scales for X/Y
-    vec2 jitterSeed = screenPos + timeOffset;
-    vec2 jitter = (hash2(jitterSeed) - 0.5) * 2.0; // [-1, 1] range
+    // Blue noise jitter (animated per frame through the noise offset) turns
+    // the PCF grid into a soft penumbra without visible noise clumps.
+    vec2 jitter = vec2(blueNoiseJitter(ivec2(29, 7)), blueNoiseJitter(ivec2(47, 59)));
     vec2 texelSize = 1.0 / vec2(textureSize(u_shadowMap, 0).xy);
     vec2 jitteredOffset = jitter * texelSize; // Scale to texel size
     jitteredOffset *= 0.5;
@@ -272,8 +252,9 @@ vec4 calculateSSR(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 lightDir) {
     // March linearly in view space along the reflection ray
     vec3 stepSize = (reflectionDir * scale) / float(numSteps);
     
-    // Jitter: add temporal randomness to starting position
-    float jitter = temporalJitter(vec2(0.17, 0.23));
+    // Jitter: offset the ray start with blue noise so undersampling along the
+    // march dissolves into fine grain instead of stair-step bands.
+    float jitter = blueNoiseJitter(ivec2(17, 31));
     vec3 currentPos = fragPos + stepSize * jitter;
     for (int i = 1; i <= numSteps; i++) {
         // Get current position in view space

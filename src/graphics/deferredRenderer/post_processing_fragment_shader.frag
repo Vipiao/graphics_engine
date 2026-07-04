@@ -11,6 +11,13 @@ uniform float u_paniniVertical;
 // Zooms the output so the distorted image fills the screen without sampling
 // outside the rendered frustum. Computed on the CPU from the strengths.
 uniform float u_paniniFitScale;
+// Tileable blue noise threshold map, shared with the lighting pass.
+uniform sampler2D u_blueNoise;
+// Per-frame toroidal shift of the noise tile (R2 sequence, computed CPU side).
+uniform ivec2 u_blueNoiseOffset;
+// Dither amplitude in color units, added before this pass quantizes the float
+// scene color to the 8-bit framebuffer. 0 = off; 1/255 covers one step.
+uniform float u_ditherStrength;
 
 in vec2 texCoord;
 
@@ -55,5 +62,11 @@ void main() {
        sourceCoord.y < 0.0 || sourceCoord.y > 1.0) {
       discard; // Float-rounding safety net; the fit scale prevents this by construction.
    }
-   FragColor = vec4(texture(u_sceneColor, sourceCoord).rgb, 1.0);
+   vec3 color = texture(u_sceneColor, sourceCoord).rgb;
+   // Centered blue noise decorrelates the 8-bit quantization error, dissolving
+   // banding into high-frequency grain the eye filters out.
+   ivec2 noiseSize = textureSize(u_blueNoise, 0);
+   ivec2 noiseCoord = (ivec2(gl_FragCoord.xy) + u_blueNoiseOffset) % noiseSize;
+   float noise = texelFetch(u_blueNoise, noiseCoord, 0).r;
+   FragColor = vec4(color + (noise - 0.5) * u_ditherStrength, 1.0);
 }
