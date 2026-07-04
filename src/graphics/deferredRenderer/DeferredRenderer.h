@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../ShaderProgram.h"
+#include "../FrameRenderParams.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <vector>
@@ -24,18 +25,22 @@ public:
     void setupGBuffer(unsigned int width, unsigned int height);
     void resizeGBuffer(unsigned int width, unsigned int height);
     
-    // Two-pass rendering coordination
+    // Two-pass rendering coordination. The lighting pass renders into an
+    // offscreen scene color target and leaves it bound (with the G-buffer depth
+    // attached), so forward passes drawn afterwards land in the same image.
     void beginGeometryPass();
     void endGeometryPassAndRenderLighting(
-        const glm::dmat4& view, const glm::dmat4& projection,
-        uint64_t frame, uint64_t time, double timeRemainder,
-        const glm::dvec3& lightDir, const glm::dvec3& camPos,
+        const FrameRenderParams& params,
         unsigned int numCascades,
         const std::vector<glm::dmat4>& cascadeMatrices,
         const std::vector<float>& cascadeBiasScales,
         const std::vector<double>& cascadeOrthoSizes,
         unsigned int shadowMapTexture = 0,
         bool shadowsEnabled = false);
+
+    // Final pass: resample the finished scene color to the default framebuffer,
+    // applying the Panini distortion (a plain copy when both strengths are 0).
+    void renderSceneToScreen(const FrameRenderParams& params);
     
     // SSAO configuration
     SSAOSettings& getSSAOSettings() { return m_ssaoSettings; }
@@ -55,9 +60,18 @@ private:
     unsigned int m_gbufferWidth{};
     unsigned int m_gbufferHeight{};
     bool m_gbufferInitialized{false};
-    
+
+    // Offscreen scene color target (lighting + forward passes). Two FBOs share
+    // the color texture: the lighting FBO has no depth attachment so the
+    // lighting shader can sample the G-buffer depth without a feedback loop;
+    // the forward FBO attaches the G-buffer depth for transparent depth testing.
+    unsigned int m_sceneColor{};
+    unsigned int m_sceneLightingFBO{};
+    unsigned int m_sceneForwardFBO{};
+
     // Shaders
     ShaderProgram m_lightingShaderProgram{};
+    ShaderProgram m_paniniShaderProgram{};
     
     // Lighting pass resources
     unsigned int m_lightingVAO{};      // For fullscreen triangle

@@ -12,11 +12,16 @@ DeferredRenderer::DeferredRenderer() {
     m_lightingShaderProgram.loadVertexShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/deferredRenderer/lighting_vertex_shader.vert");
     m_lightingShaderProgram.loadFragmentShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/deferredRenderer/lighting_fragment_shader.frag");
     m_lightingShaderProgram.linkShaders();
-    
+
+    // Load Panini post pass shaders (fullscreen triangle vertex shader is shared)
+    m_paniniShaderProgram.loadVertexShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/deferredRenderer/lighting_vertex_shader.vert");
+    m_paniniShaderProgram.loadFragmentShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/deferredRenderer/panini_post_fragment_shader.frag");
+    m_paniniShaderProgram.linkShaders();
+
     // Setup lighting VAO (for fullscreen triangle)
     glGenVertexArrays(1, &m_lightingVAO);
     // No vertex buffer needed - geometry generated in vertex shader
-    
+
     generateSSAOKernel();
 }
 
@@ -88,6 +93,8 @@ void DeferredRenderer::setupGBuffer(unsigned int width, unsigned int height) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_gbufferAlbedo, 0);
     
     // Setup normal texture (RT1) (Nx Ny Nz Roguhness)
@@ -95,6 +102,8 @@ void DeferredRenderer::setupGBuffer(unsigned int width, unsigned int height) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, m_gbufferNormal, 0);
     
     // Setup material texture (RT2) (Emissiveness + has geometry + occlusion + alpha)
@@ -102,6 +111,8 @@ void DeferredRenderer::setupGBuffer(unsigned int width, unsigned int height) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, m_gbufferMaterial, 0);
     
     // Setup depth texture
@@ -109,17 +120,48 @@ void DeferredRenderer::setupGBuffer(unsigned int width, unsigned int height) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, m_gbufferDepth, 0);
     
     // Set draw buffers
     unsigned int attachments[3] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
     glDrawBuffers(3, attachments);
-    
+
     // Check framebuffer completeness
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
         throw std::runtime_error("G-buffer framebuffer not complete!");
     }
-    
+
+    // Setup scene color texture (lighting output + forward passes). Linear
+    // filtering so the Panini post pass resamples smoothly.
+    glGenTextures(1, &m_sceneColor);
+    glBindTexture(GL_TEXTURE_2D, m_sceneColor);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    // Lighting scene FBO: color only, so the lighting shader may sample the
+    // G-buffer depth texture without a framebuffer feedback loop.
+    glGenFramebuffers(1, &m_sceneLightingFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_sceneLightingFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_sceneColor, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        throw std::runtime_error("Scene lighting framebuffer not complete!");
+    }
+
+    // Forward scene FBO: same color texture plus the G-buffer depth, so
+    // transparent forward geometry depth-tests against the opaque scene.
+    glGenFramebuffers(1, &m_sceneForwardFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_sceneForwardFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_sceneColor, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, m_gbufferDepth, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        throw std::runtime_error("Scene forward framebuffer not complete!");
+    }
+
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     m_gbufferInitialized = true;
 }
@@ -139,7 +181,10 @@ void DeferredRenderer::cleanupGBuffer() {
         glDeleteTextures(1, &m_gbufferNormal);
         glDeleteTextures(1, &m_gbufferMaterial);
         glDeleteTextures(1, &m_gbufferDepth);
+        glDeleteTextures(1, &m_sceneColor);
         glDeleteFramebuffers(1, &m_gbufferFBO);
+        glDeleteFramebuffers(1, &m_sceneLightingFBO);
+        glDeleteFramebuffers(1, &m_sceneForwardFBO);
         m_gbufferInitialized = false;
     }
 }
@@ -165,9 +210,7 @@ void DeferredRenderer::beginGeometryPass() {
 }
 
 void DeferredRenderer::endGeometryPassAndRenderLighting(
-    const glm::dmat4& view, const glm::dmat4& projection,
-    uint64_t /* frame */, uint64_t /* time */, double timeRemainder,
-    const glm::dvec3& lightDir, const glm::dvec3& /* camPos */,
+    const FrameRenderParams& params,
     unsigned int numCascades,
     const std::vector<glm::dmat4>& cascadeMatrices,
     const std::vector<float>& cascadeBiasScales,
@@ -179,9 +222,11 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
     if (!m_gbufferInitialized) {
         return;
     }
-    // Switch to default framebuffer for lighting pass
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    // Switch to the offscreen scene target for the lighting pass. Cleared with
+    // the frame's clear color so discarded (background) pixels show it.
+    glBindFramebuffer(GL_FRAMEBUFFER, m_sceneLightingFBO);
     glViewport(0, 0, m_gbufferWidth, m_gbufferHeight);
+    glClear(GL_COLOR_BUFFER_BIT);
     glDisable(GL_DEPTH_TEST);
     
     // Use lighting shader
@@ -206,11 +251,11 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
      
     GLint lightingTimeRemainderLoc = glGetUniformLocation(lightingProgramID, "u_timeRemainder");
     if (lightingTimeRemainderLoc != -1) {
-        glUniform1f(lightingTimeRemainderLoc, static_cast<float>(timeRemainder));
+        glUniform1f(lightingTimeRemainderLoc, static_cast<float>(params.timeRemainder));
     }
 
     // Set inverse projection matrix for position reconstruction
-    glm::mat4 projectionFloat = glm::mat4(projection);
+    glm::mat4 projectionFloat = glm::mat4(params.projection);
     glm::mat4 inverseProjection = glm::inverse(projectionFloat);
     GLint inverseProjectionLoc = glGetUniformLocation(lightingProgramID, "u_inverseProjection");
     if (inverseProjectionLoc != -1) {
@@ -309,8 +354,8 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
     GLint lightDirLoc = glGetUniformLocation(lightingProgramID, "u_lightDir");
     if (lightDirLoc != -1) {
         // Transform light direction to view space
-        glm::mat4 viewFloat = glm::mat4(view);
-        glm::vec4 lightDirView = viewFloat * glm::vec4(lightDir, 0.0);
+        glm::mat4 viewFloat = glm::mat4(params.view);
+        glm::vec4 lightDirView = viewFloat * glm::vec4(glm::vec3(params.lightDir), 0.0f);
         glm::vec3 lightDirFloat(lightDirView.x, lightDirView.y, lightDirView.z);
         glUniform3fv(lightDirLoc, 1, glm::value_ptr(lightDirFloat));
     }
@@ -319,15 +364,73 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
     glBindVertexArray(m_lightingVAO);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
-    
+
+    // Re-enable depth testing for subsequent rendering
+    glEnable(GL_DEPTH_TEST);
+
+    // Leave the scene target bound with the G-buffer depth attached, so forward
+    // passes (transparents) render into the scene and depth-test against it.
+    glBindFramebuffer(GL_FRAMEBUFFER, m_sceneForwardFBO);
+}
+
+void DeferredRenderer::renderSceneToScreen(const FrameRenderParams& params) {
+    // Skip if the scene target is not initialized (e.g., window minimized)
+    if (!m_gbufferInitialized) {
+        return;
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, m_gbufferWidth, m_gbufferHeight);
+    glDisable(GL_DEPTH_TEST);
+
+    m_paniniShaderProgram.use();
+    unsigned int paniniProgramID = m_paniniShaderProgram.getID();
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_sceneColor);
+    glUniform1i(glGetUniformLocation(paniniProgramID, "u_sceneColor"), 0);
+
+    // Projection is needed to convert between screen and tan-space coordinates
+    GLint projectionLoc = glGetUniformLocation(paniniProgramID, "u_projection");
+    if (projectionLoc != -1) {
+        glm::mat4 projectionFloat{ params.projection };
+        glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projectionFloat));
+    }
+
+    // Panini strengths (0 = off, the shader falls back to a plain copy)
+    GLint paniniHorizontalLoc = glGetUniformLocation(paniniProgramID, "u_paniniHorizontal");
+    if (paniniHorizontalLoc != -1) {
+        glUniform1f(paniniHorizontalLoc, static_cast<float>(params.paniniHorizontal));
+    }
+    GLint paniniVerticalLoc = glGetUniformLocation(paniniProgramID, "u_paniniVertical");
+    if (paniniVerticalLoc != -1) {
+        glUniform1f(paniniVerticalLoc, static_cast<float>(params.paniniVertical));
+    }
+
+    // Fit scale: zooms the output just enough that the distorted image fills
+    // the screen without sampling outside the rendered frustum.
+    GLint fitScaleLoc = glGetUniformLocation(paniniProgramID, "u_paniniFitScale");
+    if (fitScaleLoc != -1) {
+        glUniform1f(fitScaleLoc, static_cast<float>(params.paniniFitScale));
+    }
+
+    // Render fullscreen triangle
+    glBindVertexArray(m_lightingVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+
     // Re-enable depth testing for subsequent rendering
     glEnable(GL_DEPTH_TEST);
 }
 
 std::pair<bool, std::string> DeferredRenderer::reloadShaders() {
-   auto [success, error] = m_lightingShaderProgram.reloadShaders();
-   
-   return {success, success ? 
-      "DeferredRenderer lighting shader reloaded successfully" : 
-      "DeferredRenderer lighting shader: " + error};
+   auto [lightingSuccess, lightingError] = m_lightingShaderProgram.reloadShaders();
+   auto [paniniSuccess, paniniError] = m_paniniShaderProgram.reloadShaders();
+
+   bool success = lightingSuccess && paniniSuccess;
+   std::string errors;
+   if (!lightingSuccess) { errors += "DeferredRenderer lighting shader: " + lightingError + "\n"; }
+   if (!paniniSuccess) { errors += "DeferredRenderer panini shader: " + paniniError + "\n"; }
+
+   return {success, success ?
+      "DeferredRenderer shaders reloaded successfully" : errors};
 }

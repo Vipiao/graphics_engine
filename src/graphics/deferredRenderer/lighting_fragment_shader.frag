@@ -358,7 +358,7 @@ void main() {
    vec4 normalSample = texture(gNormal, texCoord);
    vec4 materialSample = texture(gMaterial, texCoord);
    float depth = texture(gDepth, texCoord).r;
-   
+
    vec3 albedo = albedoSample.rgb;
    float metallic = albedoSample.a;
    vec3 normal = normalize(normalSample.rgb * 2.0 - 1.0);  // Decode normal from [0,1] to [-1,1]
@@ -395,6 +395,7 @@ void main() {
    // Calculate shadow factor
    int cascadeIndex = selectCascade(fragPos);
    float shadowFactor = calculateShadow(fragPos, normal, lightDir, cascadeIndex);
+   //shadowFactor = 1.;
 
    // Phong lighting model
    float ambientStrength = 0.3;

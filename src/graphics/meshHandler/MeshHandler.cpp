@@ -549,53 +549,43 @@ void MeshHandler::removeMesh(int meshIndex) {
    // SSBO deallocation is the caller's responsibility — MeshHandler does not own SSBO indices.
 }
 
-void MeshHandler::render(
-   const glm::mat4& view, const glm::mat4& projection, uint64_t frame, uint64_t time,
-   double timeRemainder, const glm::dvec3& lightDir, glm::dvec3 camPos
-) {
+void MeshHandler::render(const FrameRenderParams& params) {
    // Use forward rendering shader program
    m_shaderProgram.use();
-   
+
    // Set light direction (unique to forward rendering)
    GLint lightDirLoc = glGetUniformLocation(m_shaderProgram.getID(), "u_lightDir");
    if (lightDirLoc != -1) {
       // Transform light direction to view space
-      glm::vec4 lightDirView = view * glm::vec4(lightDir, 0.0);
+      glm::vec4 lightDirView = glm::mat4(params.view) * glm::vec4(glm::vec3(params.lightDir), 0.0f);
       glm::vec3 lightDirFloat(lightDirView.x, lightDirView.y, lightDirView.z);
       glUniform3fv(lightDirLoc, 1, glm::value_ptr(lightDirFloat));
    }
 
    // Use helper for common rendering logic
-   renderGeometryHelper(view, projection, frame, time, timeRemainder, camPos);
+   renderGeometryHelper(params);
 }
 
-void MeshHandler::renderGeometry(
-   const glm::mat4& view, const glm::mat4& projection, uint64_t frame, uint64_t time,
-   double timeRemainder, const glm::dvec3& /* lightDir */, glm::dvec3 camPos
-) {
+void MeshHandler::renderGeometry(const FrameRenderParams& params) {
    // Use G-buffer shader program
    m_gbufferShaderProgram.use();
-   
+
    // Use helper for common rendering logic
-   renderGeometryHelper(view, projection, frame, time, timeRemainder, camPos);
+   renderGeometryHelper(params);
 }
 
 void MeshHandler::renderDepth(
-   const glm::mat4& view, const glm::mat4& projection, uint64_t frame, uint64_t time,
-   double timeRemainder, const glm::dvec3& camPos,
+   const FrameRenderParams& params,
    bool /* renderOpaque */, bool /* renderTransparent */
 ) {
    // Use depth-only shader program
    m_depthShaderProgram.use();
-   
+
    // Use helper for common rendering logic
-   renderGeometryHelper(view, projection, frame, time, timeRemainder, camPos);
+   renderGeometryHelper(params);
 }
 
-void MeshHandler::renderGeometryHelper(
-   const glm::mat4& view, const glm::mat4& projection, uint64_t frame, uint64_t time,
-   double timeRemainder, const glm::dvec3& camPos
-) {
+void MeshHandler::renderGeometryHelper(const FrameRenderParams& params) {
    // Get currently active shader program
    GLint currentProgram;
    glGetIntegerv(GL_CURRENT_PROGRAM, &currentProgram);
@@ -612,17 +602,21 @@ void MeshHandler::renderGeometryHelper(
    GLint timeRemainderLoc = glGetUniformLocation(programID, "u_timeRemainder");
    GLint cameraPosHighLoc = glGetUniformLocation(programID, "u_cameraPositionHigh");
    GLint cameraPosLowLoc = glGetUniformLocation(programID, "u_cameraPositionLow");
-   
+
+   // Convert double precision parameters to float precision for OpenGL
+   glm::mat4 viewFloat{ params.view };
+   glm::mat4 projectionFloat{ params.projection };
+
    if (viewLoc != -1)
-       glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+       glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(viewFloat));
    if (projectionLoc != -1)
-       glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
+       glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projectionFloat));
    if (frameLoc != -1)
-       glUniform1ui(frameLoc, frame);
+       glUniform1ui(frameLoc, params.frame);
    if (timeLoc != -1)
-       glUniform1ui(timeLoc, time);
+       glUniform1ui(timeLoc, params.time);
    if (timeRemainderLoc != -1)
-       glUniform1f(timeRemainderLoc, (float)timeRemainder);
+       glUniform1f(timeRemainderLoc, (float)params.timeRemainder);
 
    // Set camera position as Dekker number
    if (cameraPosHighLoc == -1 || cameraPosLowLoc == -1) {
@@ -630,9 +624,9 @@ void MeshHandler::renderGeometryHelper(
    }
    {
       typedef DekkerArithmetic<float> DekkerFloat;
-      DekkerFloat::DekkerNumber camX(camPos.x);
-      DekkerFloat::DekkerNumber camY(camPos.y);
-      DekkerFloat::DekkerNumber camZ(camPos.z);
+      DekkerFloat::DekkerNumber camX(params.camPos.x);
+      DekkerFloat::DekkerNumber camY(params.camPos.y);
+      DekkerFloat::DekkerNumber camZ(params.camPos.z);
       glm::vec3 camPosHigh(camX.main, camY.main, camZ.main);
       glm::vec3 camPosLow(camX.error, camY.error, camZ.error);
       glUniform3fv(cameraPosHighLoc, 1, glm::value_ptr(camPosHigh));

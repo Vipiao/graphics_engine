@@ -33,6 +33,11 @@ public:
    void calculateCameraVelocity();
    glm::dmat4 getViewMatrix() const;
    glm::dmat4 getProjectionMatrix() const;
+   double getAspectRatio() const;
+   // Single owner of the Panini fit scale, derived from the same members as
+   // the projection matrix. Consumers (post pass, screen anchors) must use
+   // this value rather than re-deriving it.
+   double getPaniniFitScale() const;
    void checkGLErrors();
    void swapBuffers();
    void toggleFullscreen();
@@ -55,6 +60,9 @@ public:
    uint64_t m_frameNum{ 0 };
    int m_swapInterval{ 1 }; // 0 = vsync off, 1 = vsync on.
    double m_fieldOfView{ glm::radians(120.0) }; // Horizontal field of view.
+   // Panini projection strengths. 0 = standard rectilinear (off), 1 = max distortion.
+   double m_paniniHorizontal{ 0.0 };
+   double m_paniniVertical{ 0.0 };
    // Mouse.
    MouseHandler* m_mouseHandler{ nullptr };
    KeyboardHandler* m_keyboardHandler{ nullptr };

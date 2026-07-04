@@ -92,11 +92,19 @@ void GraphicsEngine::endFrame() {
 }
 
 void GraphicsEngine::renderScene() {
-    // Convert double precision matrices to float precision
-    glm::dmat4 viewMatrix = m_graphicsEngineBase->getViewMatrix();
-    glm::dmat4 projectionMatrix = m_graphicsEngineBase->getProjectionMatrix();
-    glm::mat4 view = glm::mat4(viewMatrix);
-    glm::mat4 projection = glm::mat4(projectionMatrix);
+    // Per-frame parameters shared by the camera-view render passes
+    FrameRenderParams frameParams{
+        m_graphicsEngineBase->getViewMatrix(),
+        m_graphicsEngineBase->getProjectionMatrix(),
+        getFrameNum(),
+        m_currentInterpolationTimeStep,
+        m_interpolationTimeRemainder,
+        m_lightDirection,
+        getCamPos(),
+        m_graphicsEngineBase->m_paniniHorizontal,
+        m_graphicsEngineBase->m_paniniVertical,
+        m_graphicsEngineBase->getPaniniFitScale()
+    };
 
     unsigned int shadowMapTextureArray = 0;
     std::vector<glm::dmat4> cascadeMatricesViewSpace;
@@ -112,54 +120,32 @@ void GraphicsEngine::renderScene() {
     
     // Begin deferred geometry pass
     m_deferredRenderer->beginGeometryPass();
-    
+
     // Render geometry to G-buffer
-    m_meshHandler->renderGeometry(
-        view, projection, 
-        getFrameNum(),                    // frame number
-        m_currentInterpolationTimeStep,   // interpolation time step
-        m_interpolationTimeRemainder,     // time remainder (fractional part)
-        m_lightDirection,                 // light direction
-        getCamPos()                       // camera position
-    );
+    m_meshHandler->renderGeometry(frameParams);
 
     // Render instanced geometry to G-buffer
     m_instanceHandler->renderGeometry(
-        view, projection,
-        getFrameNum(),                    // frame number
-        m_currentInterpolationTimeStep,   // interpolation time step
-        m_interpolationTimeRemainder,     // time remainder (fractional part)
-        m_lightDirection,                 // light direction
-        getCamPos(),                      // camera position
-        /*renderOpaque=*/true, /*renderTransparent=*/false
-    );
-    
+        frameParams, /*renderOpaque=*/true, /*renderTransparent=*/false);
+
     // End geometry pass and do lighting pass
     m_deferredRenderer->endGeometryPassAndRenderLighting(
-        viewMatrix, projectionMatrix,
-        getFrameNum(),                    // frame number
-        m_currentInterpolationTimeStep,   // interpolation time step
-        m_interpolationTimeRemainder,     // time remainder (fractional part)
-        m_lightDirection,                 // light direction (for directional light)
-        getCamPos(),                      // camera position
+        frameParams,
         m_shadowRenderer->getNumCascades(), // number of cascades
-        m_shadowRenderer->getLightSpaceMatricesForViewSpace(viewMatrix), // cascade matrices for view space
+        m_shadowRenderer->getLightSpaceMatricesForViewSpace(frameParams.view),
         m_shadowRenderer->getCascadeBiasScales(), // cascade bias scales
         m_shadowRenderer->getCascadeOrthoSizes(),
         shadowMapTextureArray,            // shadow map texture array
         m_shadowsEnabled                  // whether shadows are enabled
     );
 
-    // Render transparent instances with forward rendering after lighting
+    // Render transparent instances with forward rendering after lighting.
+    // These land in the scene target left bound by the lighting pass.
     m_instanceHandler->render(
-        view, projection,
-        getFrameNum(),                    // frame number
-        m_currentInterpolationTimeStep,   // interpolation time step
-        m_interpolationTimeRemainder,     // time remainder (fractional part)
-        m_lightDirection,                 // light direction
-        getCamPos(),                      // camera position
-        /*renderOpaque=*/false, /*renderTransparent=*/true
-    );
+        frameParams, /*renderOpaque=*/false, /*renderTransparent=*/true);
+
+    // Resample the finished scene to the screen with the Panini distortion
+    m_deferredRenderer->renderSceneToScreen(frameParams);
 
     // Render 2D overlay
     float aspectRatio = getScreenWidth() / (float)getScreenHeight();
@@ -175,24 +161,25 @@ void GraphicsEngine::renderShadowPass() {
     for (unsigned int cascadeIndex = 0; cascadeIndex < numCascades; ++cascadeIndex) {
         // Bind the current cascade layer
         m_shadowRenderer->bindCascadeLayer(cascadeIndex);
-        
-        // Get light space matrix for this cascade
-        glm::mat4 lightSpaceMatrix = glm::mat4(lightSpaceMatrices[cascadeIndex]);
-        
-        // Render depth-only pass for shadow mapping
+
+        // Identity view, light projection for transform. Panini strengths stay at
+        // their default 0: the shadow pass renders from the light, never distorted.
+        FrameRenderParams depthParams{
+            glm::dmat4(1.0),
+            lightSpaceMatrices[cascadeIndex],
+            getFrameNum(),
+            m_currentInterpolationTimeStep,
+            m_interpolationTimeRemainder,
+            m_lightDirection,
+            getCamPos()
+        };
+
+        // Render depth-only pass for shadow mapping. Only opaque objects cast shadows.
         m_meshHandler->renderDepth(
-            glm::mat4(1.0), lightSpaceMatrix,  // Identity view, light projection for transform
-            getFrameNum(),                     // frame number
-            m_currentInterpolationTimeStep,    // interpolation time step
-            m_interpolationTimeRemainder,      // time remainder (fractional part)
-            getCamPos(),                       // camera position
-            /*renderOpaque=*/true, /*renderTransparent=*/false  // Only opaque objects cast shadows
-        );
+            depthParams, /*renderOpaque=*/true, /*renderTransparent=*/false);
 
         m_instanceHandler->renderDepth(
-            glm::mat4(1.0), lightSpaceMatrix,  // Identity view, light projection for transform
-            getFrameNum(), m_currentInterpolationTimeStep, m_interpolationTimeRemainder,
-            getCamPos(), /*renderOpaque=*/true, /*renderTransparent=*/false);
+            depthParams, /*renderOpaque=*/true, /*renderTransparent=*/false);
     }
 }
 

@@ -1,4 +1,5 @@
 #include "GraphicsEngineBase.h"
+#include "math/PaniniProjection.h"
 
 #include <cstdlib>
 #include <glm/gtc/matrix_transform.hpp>
@@ -220,17 +221,24 @@ glm::dmat4 GraphicsEngineBase::getViewMatrix() const {
 }
 
 glm::dmat4 GraphicsEngineBase::getProjectionMatrix() const {
-   glm::dmat4 projectionMatrix;
-   double aspectRatio{};
-   if (m_screen_width == 0) aspectRatio = 1.;
-   else if (m_screen_height == 0) aspectRatio = 1.;
-   else aspectRatio = (double)m_screen_width / (double)m_screen_height;
-   
+   double aspectRatio = getAspectRatio();
+
    // Set m_fieldOfView as horizontal field of view.
    double fieldOfViewVertical = 2.0 * atan(tan(m_fieldOfView / 2.0) / aspectRatio);
-   projectionMatrix = glm::perspective(fieldOfViewVertical, aspectRatio, 0.1, 10000.);
-   
-   return projectionMatrix;
+   return glm::perspective(fieldOfViewVertical, aspectRatio, 0.1, 10000.);
+}
+
+double GraphicsEngineBase::getAspectRatio() const {
+   if (m_screen_width == 0 || m_screen_height == 0) {
+      return 1.;
+   }
+   return (double)m_screen_width / (double)m_screen_height;
+}
+
+double GraphicsEngineBase::getPaniniFitScale() const {
+   double tanHalfFov = tan(m_fieldOfView / 2.0);
+   glm::dvec2 tanEdge{ tanHalfFov, tanHalfFov / getAspectRatio() };
+   return PaniniProjection::fitScale(m_paniniHorizontal, m_paniniVertical, tanEdge);
 }
 
 void GraphicsEngineBase::checkGLErrors() {

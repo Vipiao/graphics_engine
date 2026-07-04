@@ -42,6 +42,11 @@ public:
     glm::dquat& getCamOri() { return getGraphicsEngineBase()->m_camOri; }
     uint64_t getFrameNum() { return getGraphicsEngineBase()->m_frameNum; }
     double& getFieldOfView() { return getGraphicsEngineBase()->m_fieldOfView; }
+    // Panini projection strengths. 0 = standard rectilinear (off), 1 = max distortion.
+    double& getPaniniHorizontal() { return getGraphicsEngineBase()->m_paniniHorizontal; }
+    double& getPaniniVertical() { return getGraphicsEngineBase()->m_paniniVertical; }
+    // Derived output zoom of the Panini post pass; pass to screen-anchor projection.
+    double getPaniniFitScale() { return getGraphicsEngineBase()->getPaniniFitScale(); }
     MouseHandler* getMouseHandler() { return getGraphicsEngineBase()->m_mouseHandler; }
     KeyboardHandler* getKeyboardHandler() { return getGraphicsEngineBase()->m_keyboardHandler; }
 

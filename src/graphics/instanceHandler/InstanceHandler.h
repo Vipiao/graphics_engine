@@ -9,6 +9,7 @@
 #include <glad/glad.h>
 #include "../TextureManagerBase.h"
 #include "../ShaderProgram.h"
+#include "../FrameRenderParams.h"
 
 // Forward declarations
 class SSBOManager;
@@ -130,20 +131,15 @@ public:
     
     // Rendering
     void render(
-        const glm::mat4& view, const glm::mat4& projection,
-        uint64_t frame, uint64_t time, double timeRemainder,
-        const glm::dvec3& lightDir, const glm::dvec3& camPos,
-        bool renderOpaque = true, bool renderTransparent = true
-    );
+        const FrameRenderParams& params,
+        bool renderOpaque = true, bool renderTransparent = true);
 
     // Geometry-only rendering for deferred pipeline
     void renderGeometry(
-        const glm::mat4& view, const glm::mat4& projection, uint64_t frame, uint64_t time,
-        double timeRemainder, const glm::dvec3& lightPos, const glm::dvec3& camPos,
+        const FrameRenderParams& params,
         bool renderOpaque = true, bool renderTransparent = true);
     void renderDepth(
-        const glm::mat4& view, const glm::mat4& projection, uint64_t frame, uint64_t time,
-        double timeRemainder, const glm::dvec3& camPos,
+        const FrameRenderParams& params,
         bool renderOpaque = true, bool renderTransparent = true);
 
     // Shader reloading
@@ -170,7 +166,6 @@ private:
 
     // Helper function for common rendering logic
     void renderGeometryHelper(
-        const glm::mat4& view, const glm::mat4& projection, uint64_t frame, uint64_t time,
-        double timeRemainder, const glm::dvec3& camPos,
+        const FrameRenderParams& params,
         bool renderOpaque, bool renderTransparent);
 };

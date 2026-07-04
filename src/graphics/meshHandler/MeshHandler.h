@@ -74,19 +74,19 @@
  *     colorTextureUnit, normalTextureUnit, interpolationTimeStep);
  * 
  * // In render loop:
- * glm::mat4 view = camera.getViewMatrix();
- * glm::mat4 projection = camera.getProjectionMatrix();
- * glm::dvec3 lightPos(5.0, 5.0, 5.0);
- * glm::dvec3 camPos = camera.getPosition();
- * 
+ * FrameRenderParams frameParams{
+ *     camera.getViewMatrix(), camera.getProjectionMatrix(),
+ *     frameCount, timeMs, timeFraction, lightDir, camera.getPosition()
+ * };
+ *
  * // Single pass rendering
- * meshHandler.render(view, projection, frameCount, timeMs, 
- *                   timeFraction, lightPos, camPos);
+ * meshHandler.render(frameParams);
  * @endcode
  */
 
 #include "../ShaderProgram.h"
 #include "../SSBOManager.h"
+#include "../FrameRenderParams.h"
 
 #include <glm/glm.hpp>
 #include <vector>
@@ -154,15 +154,10 @@ public:
       const std::vector<glm::dvec4>* colors = nullptr
    );
    void removeMesh(int meshIndex);
-   void render(
-      const glm::mat4& view, const glm::mat4& projection, uint64_t frame, uint64_t time,
-      double timeRemainder, const glm::dvec3& lightDir, glm::dvec3 camPos);
-   void renderGeometry(
-      const glm::mat4& view, const glm::mat4& projection, uint64_t frame, uint64_t time,
-      double timeRemainder, const glm::dvec3& lightDir, glm::dvec3 camPos);
+   void render(const FrameRenderParams& params);
+   void renderGeometry(const FrameRenderParams& params);
    void renderDepth(
-      const glm::mat4& view, const glm::mat4& projection, uint64_t frame, uint64_t time,
-      double timeRemainder, const glm::dvec3& camPos,
+      const FrameRenderParams& params,
       bool renderOpaque = true, bool renderTransparent = false);
 
    Texture createTexture(std::string texturePath);
@@ -190,8 +185,6 @@ protected:
 
 private:
    // Helper function for common rendering logic
-   void renderGeometryHelper(
-       const glm::mat4& view, const glm::mat4& projection, uint64_t frame, uint64_t time,
-       double timeRemainder, const glm::dvec3& camPos);
+   void renderGeometryHelper(const FrameRenderParams& params);
 
 };
