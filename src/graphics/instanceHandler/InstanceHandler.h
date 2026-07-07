@@ -125,8 +125,10 @@ public:
     // Texture management
     int createTexture(const std::string& texturePath);
     
-    // Geometry management  
-    std::weak_ptr<Geometry> createGeometry(const std::string& modelPath);
+    // Geometry management. Transparent geometries are drawn in the Weighted
+    // Blended OIT pass instead of the opaque G-buffer pass.
+    std::weak_ptr<Geometry> createGeometry(const std::string& modelPath,
+                                           bool transparent = false);
     void releaseGeometry(std::weak_ptr<Geometry> geometry);
     
     // Rendering
@@ -141,6 +143,11 @@ public:
     void renderDepth(
         const FrameRenderParams& params,
         bool renderOpaque = true, bool renderTransparent = true);
+
+    // Weighted Blended OIT pass for transparent geometry. The blend and depth
+    // state is owned by DeferredRenderer::beginOITPass; this only binds the OIT
+    // shader and draws the transparent geometries.
+    void renderOIT(const FrameRenderParams& params);
 
     // Shader reloading
     std::pair<bool, std::string> reloadShaders();
@@ -157,6 +164,7 @@ private:
     ShaderProgram m_shaderProgram;
     ShaderProgram m_gbufferShaderProgram;
     ShaderProgram m_depthShaderProgram;
+    ShaderProgram m_oitShaderProgram;
     
     // Internal helpers
     void loadGeometryFromFile(Geometry* geometry, const std::string& modelPath);
@@ -164,8 +172,10 @@ private:
                            const std::vector<uint32_t>& indices);
     void createShaderProgram();
 
-    // Helper function for common rendering logic
+    // Helper function for common rendering logic. When oitBlend is set, the
+    // caller owns the blend and depth-write state (OIT pass), so the per-geometry
+    // alpha-blend setup is skipped and depth writes stay disabled.
     void renderGeometryHelper(
         const FrameRenderParams& params,
-        bool renderOpaque, bool renderTransparent);
+        bool renderOpaque, bool renderTransparent, bool oitBlend = false);
 };

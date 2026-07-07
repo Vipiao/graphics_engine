@@ -153,6 +153,11 @@ InstanceHandler::InstanceHandler(SSBOManager* ssboManager)
     m_depthShaderProgram.loadVertexShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/instanceHandler/instance_depth_vertex_shader.vert");
     m_depthShaderProgram.loadFragmentShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/shared_shaders/depth_fragment_shader.frag");
     m_depthShaderProgram.linkShaders();
+
+    // Create Weighted Blended OIT shader program (shares the instance vertex shader)
+    m_oitShaderProgram.loadVertexShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/instanceHandler/instance_vertex_shader.vert");
+    m_oitShaderProgram.loadFragmentShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/shared_shaders/oit_fragment_shader.frag");
+    m_oitShaderProgram.linkShaders();
 }
 
 InstanceHandler::~InstanceHandler() {
@@ -170,12 +175,14 @@ int InstanceHandler::createTexture(const std::string& texturePath) {
     return m_textureManager.createTexture(texturePath);
 }
 
-std::weak_ptr<Geometry> InstanceHandler::createGeometry(const std::string& modelPath) {
+std::weak_ptr<Geometry> InstanceHandler::createGeometry(const std::string& modelPath,
+                                                       bool transparent) {
     auto geometry = std::make_shared<Geometry>();
-    
+
     loadGeometryFromFile(geometry.get(), modelPath);
+    geometry->setAlphaBlending(transparent);
     m_geometries.push_back(geometry);
-    
+
     return geometry;
 }
 
@@ -369,9 +376,29 @@ void InstanceHandler::renderDepth(const FrameRenderParams& params,
     renderGeometryHelper(params, renderOpaque, renderTransparent);
 }
 
+void InstanceHandler::renderOIT(const FrameRenderParams& params) {
+    if (m_geometries.empty()) return;
+
+    // Use the OIT accumulation shader
+    m_oitShaderProgram.use();
+
+    // Set light direction (transparent shading matches the forward model)
+    GLint lightDirLoc = glGetUniformLocation(m_oitShaderProgram.getID(), "u_lightDir");
+    if (lightDirLoc != -1) {
+        glm::vec4 lightDirView =
+            glm::mat4(params.view) * glm::vec4(glm::vec3(params.lightDir), 0.0f);
+        glm::vec3 lightDirFloat(lightDirView.x, lightDirView.y, lightDirView.z);
+        glUniform3fv(lightDirLoc, 1, glm::value_ptr(lightDirFloat));
+    }
+
+    // Only transparent geometries; blend/depth-write state owned by the caller.
+    renderGeometryHelper(params, /*renderOpaque=*/false, /*renderTransparent=*/true,
+                         /*oitBlend=*/true);
+}
+
 void InstanceHandler::renderGeometryHelper(
     const FrameRenderParams& params,
-    bool renderOpaque, bool renderTransparent) {
+    bool renderOpaque, bool renderTransparent, bool oitBlend) {
 
     // Get currently active shader program
     GLint currentProgram;
@@ -460,8 +487,9 @@ void InstanceHandler::renderGeometryHelper(
             glDepthRange(0.0, static_cast<GLdouble>(geometry->m_depthCompression));
         }
         
-        // Apply geometry-specific alpha blending
-        if (geometry->m_enableAlphaBlending) {
+        // Apply geometry-specific alpha blending. In the OIT pass the caller owns
+        // the blend state (per-target accumulation), so leave it untouched.
+        if (!oitBlend && geometry->m_enableAlphaBlending) {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         }
@@ -478,11 +506,13 @@ void InstanceHandler::renderGeometryHelper(
 
         // Restore OpenGL state
         glDepthRange(savedDepthRange[0], savedDepthRange[1]);
-        
-        if (geometry->m_enableAlphaBlending && !blendEnabled) {
-            glDisable(GL_BLEND);
-        } else if (!geometry->m_enableAlphaBlending && blendEnabled) {
-            glEnable(GL_BLEND);
+
+        if (!oitBlend) {
+            if (geometry->m_enableAlphaBlending && !blendEnabled) {
+                glDisable(GL_BLEND);
+            } else if (!geometry->m_enableAlphaBlending && blendEnabled) {
+                glEnable(GL_BLEND);
+            }
         }
     }
     
@@ -496,10 +526,12 @@ std::pair<bool, std::string> InstanceHandler::reloadShaders() {
    auto [success1, error1] = m_shaderProgram.reloadShaders();
    auto [success2, error2] = m_gbufferShaderProgram.reloadShaders();
    auto [success3, error3] = m_depthShaderProgram.reloadShaders();
-   
+   auto [success4, error4] = m_oitShaderProgram.reloadShaders();
+
    if (!success1) { allSuccess = false; allErrors += "Main shader: " + error1 + "\n"; }
    if (!success2) { allSuccess = false; allErrors += "GBuffer shader: " + error2 + "\n"; }
    if (!success3) { allSuccess = false; allErrors += "Depth shader: " + error3 + "\n"; }
+   if (!success4) { allSuccess = false; allErrors += "OIT shader: " + error4 + "\n"; }
    
    return {allSuccess, allSuccess ? "All InstanceHandler shaders reloaded successfully" : allErrors};
 }

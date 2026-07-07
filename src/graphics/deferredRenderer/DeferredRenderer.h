@@ -38,6 +38,14 @@ public:
         unsigned int shadowMapTexture = 0,
         bool shadowsEnabled = false);
 
+    // Weighted Blended OIT. beginOITPass binds the accumulation targets (sharing
+    // the G-buffer depth for testing against opaque geometry, with depth writes
+    // and per-target blend configured for accumulation). Transparent geometry is
+    // drawn between the two calls; compositeOIT resolves the result over the lit
+    // scene and restores default blend/depth state.
+    void beginOITPass();
+    void compositeOIT();
+
     // Final post-processing pass: resample the finished scene color to the
     // default framebuffer, applying the Panini distortion (a plain copy when
     // both strengths are 0) and blue-noise dithering of the 8-bit quantization.
@@ -70,9 +78,15 @@ private:
     unsigned int m_sceneLightingFBO{};
     unsigned int m_sceneForwardFBO{};
 
+    // Weighted Blended OIT accumulation targets, sharing the G-buffer depth.
+    unsigned int m_oitFBO{};
+    unsigned int m_oitAccum{};      // RGBA16F: Σ(color·alpha·weight), Σ(alpha·weight)
+    unsigned int m_oitRevealage{};  // R16F:    Π(1 - alpha)
+
     // Shaders
     ShaderProgram m_lightingShaderProgram{};
     ShaderProgram m_postProcessShaderProgram{};
+    ShaderProgram m_oitCompositeShaderProgram{};
 
     // Lighting pass resources
     unsigned int m_lightingVAO{};      // For fullscreen triangle

@@ -140,10 +140,12 @@ void GraphicsEngine::renderScene() {
         m_shadowsEnabled                  // whether shadows are enabled
     );
 
-    // Render transparent instances with forward rendering after lighting.
-    // These land in the scene target left bound by the lighting pass.
-    m_instanceHandler->render(
-        frameParams, /*renderOpaque=*/false, /*renderTransparent=*/true);
+    // Render transparent instances with Weighted Blended OIT: accumulate the
+    // transparent fragments order-independently, then composite over the lit
+    // scene left bound by the lighting pass.
+    m_deferredRenderer->beginOITPass();
+    m_instanceHandler->renderOIT(frameParams);
+    m_deferredRenderer->compositeOIT();
 
     // Post-processing pass: resample the finished scene to the screen
     // (Panini distortion + blue-noise dither).

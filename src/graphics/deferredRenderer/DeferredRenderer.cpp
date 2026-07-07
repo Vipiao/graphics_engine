@@ -20,6 +20,11 @@ DeferredRenderer::DeferredRenderer() {
     m_postProcessShaderProgram.loadFragmentShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/deferredRenderer/post_processing_fragment_shader.frag");
     m_postProcessShaderProgram.linkShaders();
 
+    // Load OIT composite shaders (fullscreen triangle vertex shader is shared)
+    m_oitCompositeShaderProgram.loadVertexShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/deferredRenderer/lighting_vertex_shader.vert");
+    m_oitCompositeShaderProgram.loadFragmentShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/deferredRenderer/oit_composite_fragment_shader.frag");
+    m_oitCompositeShaderProgram.linkShaders();
+
     // Setup lighting VAO (for fullscreen triangle)
     glGenVertexArrays(1, &m_lightingVAO);
     // No vertex buffer needed - geometry generated in vertex shader
@@ -198,6 +203,38 @@ void DeferredRenderer::setupGBuffer(unsigned int width, unsigned int height) {
         throw std::runtime_error("Scene forward framebuffer not complete!");
     }
 
+    // OIT accumulation targets. Float accum for HDR additive blending; single
+    // channel revealage holds the product of transparencies. Both share the
+    // G-buffer depth so transparents test against opaque geometry (never write).
+    glGenTextures(1, &m_oitAccum);
+    glBindTexture(GL_TEXTURE_2D, m_oitAccum);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glGenTextures(1, &m_oitRevealage);
+    glBindTexture(GL_TEXTURE_2D, m_oitRevealage);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, width, height, 0, GL_RED, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glGenFramebuffers(1, &m_oitFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_oitFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_oitAccum, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, m_oitRevealage, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, m_gbufferDepth, 0);
+    {
+        unsigned int oitAttachments[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+        glDrawBuffers(2, oitAttachments);
+    }
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        throw std::runtime_error("OIT framebuffer not complete!");
+    }
+
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     m_gbufferInitialized = true;
 }
@@ -218,9 +255,12 @@ void DeferredRenderer::cleanupGBuffer() {
         glDeleteTextures(1, &m_gbufferMaterial);
         glDeleteTextures(1, &m_gbufferDepth);
         glDeleteTextures(1, &m_sceneColor);
+        glDeleteTextures(1, &m_oitAccum);
+        glDeleteTextures(1, &m_oitRevealage);
         glDeleteFramebuffers(1, &m_gbufferFBO);
         glDeleteFramebuffers(1, &m_sceneLightingFBO);
         glDeleteFramebuffers(1, &m_sceneForwardFBO);
+        glDeleteFramebuffers(1, &m_oitFBO);
         m_gbufferInitialized = false;
     }
 }
@@ -411,6 +451,69 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
     glBindFramebuffer(GL_FRAMEBUFFER, m_sceneForwardFBO);
 }
 
+void DeferredRenderer::beginOITPass() {
+    if (!m_gbufferInitialized) {
+        return;
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, m_oitFBO);
+    glViewport(0, 0, m_gbufferWidth, m_gbufferHeight);
+
+    // Accumulation starts empty; revealage (fraction of background surviving)
+    // starts fully opaque-free at 1 and is multiplied down per fragment.
+    glClearBufferfv(GL_COLOR, 0, glm::value_ptr(glm::vec4(0.0f)));
+    glClearBufferfv(GL_COLOR, 1, glm::value_ptr(glm::vec4(1.0f)));
+
+    // Depth test against opaque geometry, but never write: transparent
+    // fragments must not occlude each other (order independence).
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+
+    // Per-target blend: accum accumulates additively, revealage multiplies by
+    // (1 - alpha). Requires indexed blend (GL 4.0+).
+    glEnable(GL_BLEND);
+    glBlendFunci(0, GL_ONE, GL_ONE);
+    glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_COLOR);
+}
+
+void DeferredRenderer::compositeOIT() {
+    if (!m_gbufferInitialized) {
+        return;
+    }
+
+    // Blend the resolved transparency over the lit scene color. The color-only
+    // scene FBO avoids a feedback loop with the shared G-buffer depth.
+    glBindFramebuffer(GL_FRAMEBUFFER, m_sceneLightingFBO);
+    glViewport(0, 0, m_gbufferWidth, m_gbufferHeight);
+    glDisable(GL_DEPTH_TEST);
+
+    // Non-indexed call resets blend for all draw buffers, undoing the per-target
+    // functions from beginOITPass. Expands to avgColor*(1-reveal) + scene*reveal.
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA);
+
+    m_oitCompositeShaderProgram.use();
+    unsigned int programID = m_oitCompositeShaderProgram.getID();
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_oitAccum);
+    glUniform1i(glGetUniformLocation(programID, "u_accum"), 0);
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, m_oitRevealage);
+    glUniform1i(glGetUniformLocation(programID, "u_revealage"), 1);
+
+    glBindVertexArray(m_lightingVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+
+    // Restore default state for the following passes and the next frame's depth
+    // clear (which needs depth writes enabled).
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+}
+
 void DeferredRenderer::renderPostProcessing(const FrameRenderParams& params) {
     // Skip if the scene target is not initialized (e.g., window minimized)
     if (!m_gbufferInitialized) {
@@ -473,13 +576,15 @@ void DeferredRenderer::renderPostProcessing(const FrameRenderParams& params) {
 std::pair<bool, std::string> DeferredRenderer::reloadShaders() {
    auto [lightingSuccess, lightingError] = m_lightingShaderProgram.reloadShaders();
    auto [postProcessSuccess, postProcessError] = m_postProcessShaderProgram.reloadShaders();
+   auto [oitSuccess, oitError] = m_oitCompositeShaderProgram.reloadShaders();
 
-   bool success = lightingSuccess && postProcessSuccess;
+   bool success = lightingSuccess && postProcessSuccess && oitSuccess;
    std::string errors;
    if (!lightingSuccess) { errors += "DeferredRenderer lighting shader: " + lightingError + "\n"; }
    if (!postProcessSuccess) {
       errors += "DeferredRenderer post-processing shader: " + postProcessError + "\n";
    }
+   if (!oitSuccess) { errors += "DeferredRenderer OIT composite shader: " + oitError + "\n"; }
 
    return {success, success ?
       "DeferredRenderer shaders reloaded successfully" : errors};
