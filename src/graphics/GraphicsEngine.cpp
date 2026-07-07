@@ -234,8 +234,38 @@ void GraphicsEngine::removeMesh(int meshId) {
     m_meshHandler->removeMesh(meshId);
 }
 
+std::vector<uint32_t> GraphicsEngine::appendTrianglesToMesh(
+    int meshIndex,
+    const std::vector<glm::dvec3>* vertices,
+    const std::vector<glm::dvec3>* normals,
+    const std::vector<glm::dvec3>* tangents,
+    const std::vector<glm::dvec2>* uvs,
+    const std::vector<double>* occlusionFactors,
+    const std::vector<glm::dvec4>* colors) {
+    return m_meshHandler->appendTrianglesToMesh(
+        meshIndex, vertices, normals, tangents, uvs, occlusionFactors, colors);
+}
+
+void GraphicsEngine::removeTrianglesFromMesh(int meshIndex,
+                                             const std::vector<uint32_t>* triangleIds) {
+    m_meshHandler->removeTrianglesFromMesh(meshIndex, triangleIds);
+}
+
 MeshHandler::Texture GraphicsEngine::createTexture(const std::string& texturePath) {
     return m_meshHandler->createTexture(texturePath);
+}
+
+std::weak_ptr<Geometry> GraphicsEngine::createInstanceGeometry(const std::string& modelPath,
+                                                               bool transparent) {
+    return m_instanceHandler->createGeometry(modelPath, transparent);
+}
+
+void GraphicsEngine::releaseInstanceGeometry(std::weak_ptr<Geometry> geometry) {
+    m_instanceHandler->releaseGeometry(geometry);
+}
+
+int GraphicsEngine::createInstanceTexture(const std::string& texturePath) {
+    return m_instanceHandler->createTexture(texturePath);
 }
 
 int GraphicsEngine::loadModel(

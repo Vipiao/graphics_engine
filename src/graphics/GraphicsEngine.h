@@ -14,6 +14,7 @@
 class DeferredRenderer;
 class MeshManager2D;
 class InstanceHandler;
+class Geometry;
 class SSBOManager;
 class ShadowRenderer;
 
@@ -85,7 +86,18 @@ public:
     );
     
     void removeMesh(int meshId);
-    
+
+    // Triangle-mesh editing for a grid mesh (forwards to the internal MeshHandler).
+    std::vector<uint32_t> appendTrianglesToMesh(
+        int meshIndex,
+        const std::vector<glm::dvec3>* vertices,
+        const std::vector<glm::dvec3>* normals,
+        const std::vector<glm::dvec3>* tangents,
+        const std::vector<glm::dvec2>* uvs,
+        const std::vector<double>* occlusionFactors = nullptr,
+        const std::vector<glm::dvec4>* colors = nullptr);
+    void removeTrianglesFromMesh(int meshIndex, const std::vector<uint32_t>* triangleIds);
+
     MeshHandler::Texture createTexture(const std::string& texturePath);
     
     int loadModel(
@@ -108,9 +120,15 @@ public:
     // 2D mesh manager access
     MeshManager2D* getMeshManager2D() { return m_meshManager2D.get(); }
 
-    // Instance handler access
-    InstanceHandler* getInstanceHandler() { return m_instanceHandler.get(); }
-    
+    // Instanced-geometry resources. Thin forwarders over the internal
+    // InstanceHandler: geometry is created transparent (OIT pass) when requested.
+    // The returned Geometry/Instance handles are the interface for per-instance
+    // updates (addInstance, updateInstanceInBuffer, ...).
+    std::weak_ptr<Geometry> createInstanceGeometry(const std::string& modelPath,
+                                                   bool transparent = false);
+    void releaseInstanceGeometry(std::weak_ptr<Geometry> geometry);
+    int createInstanceTexture(const std::string& texturePath);
+
     // Render parameter access
     std::pair<uint64_t, double> getRenderParameters() const { return {m_currentInterpolationTimeStep, m_interpolationTimeRemainder}; }
 
@@ -120,7 +138,6 @@ public:
     std::pair<bool, std::string> reloadShaders();
 
     std::unique_ptr<SSBOManager> m_ssboManager;
-    std::unique_ptr<MeshHandler> m_meshHandler;
     uint64_t currentTime{0};
 
 private:
@@ -128,6 +145,7 @@ private:
 
     std::unique_ptr<DeferredRenderer> m_deferredRenderer;
     std::unique_ptr<MeshManager2D> m_meshManager2D;
+    std::unique_ptr<MeshHandler> m_meshHandler;
     std::unique_ptr<InstanceHandler> m_instanceHandler;
     std::unique_ptr<ShadowRenderer> m_shadowRenderer;
 
