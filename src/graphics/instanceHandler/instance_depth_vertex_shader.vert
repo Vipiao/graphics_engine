@@ -28,7 +28,7 @@ layout (location = 4) in vec3 localPosition;
 layout (location = 5) in vec4 localOrientation;
 layout (location = 6) in vec3 localScale;
 // layout (location = 7) is instanceColor - not needed for depth pass
-layout (location = 8) in int meshIndex;
+layout (location = 8) in int ssboIndex;
 
 uniform uint u_frame;
 uniform uint u_time;
@@ -110,8 +110,8 @@ vec3 applyRotationTransform(mat3 orientation, vec3 position, vec3 centerOfRotati
 }
 
 void main() {
-    // Get geometry world transform from SSBO using instance's meshIndex
-    MeshData meshData = meshDataBuffer[meshIndex];
+    // Get geometry world transform from SSBO using instance's ssboIndex
+    MeshData meshData = meshDataBuffer[ssboIndex];
     
     // Calculate time delta
     uint deltaTime = u_time - meshData.time;

@@ -12,9 +12,11 @@
 
 // Subsystems are held by pointer — include their headers where you use them.
 class DeferredRenderer;
+class RayVolumeHandler;
 class MeshManager2D;
 class InstanceHandler;
 class Geometry;
+class Instance;
 class SSBOManager;
 class ShadowRenderer;
 
@@ -129,6 +131,25 @@ public:
     void releaseInstanceGeometry(std::weak_ptr<Geometry> geometry);
     int createInstanceTexture(const std::string& texturePath);
 
+    // Ray-volume resources: proxy-geometry volumetric effects composited with the
+    // transparency (OIT) pass. A material is an injected shading body; geometries
+    // are proxy meshes for a material; instances carry the animated value vector
+    // (state + velocity) the shader integrates.
+    size_t createRayVolumeMaterial(const std::string& bodySnippetPath = "");
+    std::weak_ptr<Geometry> createRayVolumeGeometry(const std::string& modelPath,
+                                                    size_t materialIndex);
+    void releaseRayVolumeGeometry(std::weak_ptr<Geometry> geometry);
+    std::weak_ptr<Instance> addRayVolumeInstance(
+        std::weak_ptr<Geometry> geometry, int ssboIndex,
+        const glm::dvec4& color = glm::dvec4(1.0),
+        const glm::dvec4& state = glm::dvec4(0.0),
+        const glm::dvec4& velocity = glm::dvec4(0.0));
+    void setRayVolumeInstanceValues(std::weak_ptr<Geometry> geometry,
+                                    std::weak_ptr<Instance> instance,
+                                    const glm::dvec4& state, const glm::dvec4& velocity);
+    void removeRayVolumeInstance(std::weak_ptr<Geometry> geometry,
+                                 std::weak_ptr<Instance> instance);
+
     // Render parameter access
     std::pair<uint64_t, double> getRenderParameters() const { return {m_currentInterpolationTimeStep, m_interpolationTimeRemainder}; }
 
@@ -147,6 +168,7 @@ private:
     std::unique_ptr<MeshManager2D> m_meshManager2D;
     std::unique_ptr<MeshHandler> m_meshHandler;
     std::unique_ptr<InstanceHandler> m_instanceHandler;
+    std::unique_ptr<RayVolumeHandler> m_rayVolumeHandler;
     std::unique_ptr<ShadowRenderer> m_shadowRenderer;
 
     // Render parameters for interpolation

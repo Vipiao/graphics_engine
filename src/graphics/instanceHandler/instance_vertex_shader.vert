@@ -33,7 +33,7 @@ layout (location = 4) in vec3 localPosition;
 layout (location = 5) in vec4 localOrientation;
 layout (location = 6) in vec3 localScale;
 layout (location = 7) in vec4 instanceColor;
-layout (location = 8) in int meshIndex;
+layout (location = 8) in int ssboIndex;
 layout (location = 9) in int instanceColorTextureUnit;
 layout (location = 10) in int instanceNormalTextureUnit;
 layout (location = 11) in int instanceMaterialTextureUnit;
@@ -148,8 +148,8 @@ void main() {
         return;
     }
 
-    // Get geometry world transform from SSBO using instance's meshIndex
-    MeshData meshData = meshDataBuffer[meshIndex];
+    // Get geometry world transform from SSBO using instance's ssboIndex
+    MeshData meshData = meshDataBuffer[ssboIndex];
     
     // Calculate time delta
     uint deltaTime = u_time - meshData.time;

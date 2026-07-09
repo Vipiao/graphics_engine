@@ -46,6 +46,27 @@ public:
     void beginOITPass();
     void compositeOIT();
 
+    // Ray-volume sub-pass: proxy-geometry volumetric effects that accumulate into
+    // the same WBOIT targets as beginOITPass, drawn after the ordinary
+    // transparents and before compositeOIT. Binds a depth-less variant of the OIT
+    // framebuffer so the volume shader may sample the G-buffer depth (bound as a
+    // texture) without a feedback loop; disables hardware depth testing (the
+    // shader clamps against the sampled depth) and culls front faces so the
+    // volume stays visible with the camera inside it. end restores the default
+    // cull face and depth test for compositeOIT.
+    void beginRayVolumeSubPass();
+    void endRayVolumeSubPass();
+
+    // Exposed for the ray-volume sub-pass, whose shader samples scene depth and
+    // reconstructs view-space position per pixel. The scene color holds the lit
+    // opaque result at sub-pass time (transparents are not composited yet), so a
+    // body may read the underlying opaque color to emulate blend modes.
+    unsigned int getGBufferDepthTexture() const { return m_gbufferDepth; }
+    unsigned int getSceneColorTexture() const { return m_sceneColor; }
+    unsigned int getGBufferWidth() const { return m_gbufferWidth; }
+    unsigned int getGBufferHeight() const { return m_gbufferHeight; }
+    bool isGBufferInitialized() const { return m_gbufferInitialized; }
+
     // Final post-processing pass: resample the finished scene color to the
     // default framebuffer, applying the Panini distortion (a plain copy when
     // both strengths are 0) and blue-noise dithering of the 8-bit quantization.
@@ -82,6 +103,9 @@ private:
     unsigned int m_oitFBO{};
     unsigned int m_oitAccum{};      // RGBA16F: Σ(color·alpha·weight), Σ(alpha·weight)
     unsigned int m_oitRevealage{};  // R16F:    Π(1 - alpha)
+    // Same two accumulation targets with no depth attachment, so the ray-volume
+    // sub-pass can sample the G-buffer depth as a texture without a feedback loop.
+    unsigned int m_oitNoDepthFBO{};
 
     // Shaders
     ShaderProgram m_lightingShaderProgram{};

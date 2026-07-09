@@ -235,6 +235,20 @@ void DeferredRenderer::setupGBuffer(unsigned int width, unsigned int height) {
         throw std::runtime_error("OIT framebuffer not complete!");
     }
 
+    // Depth-less variant sharing the same accumulation targets. The ray-volume
+    // sub-pass binds this so it can sample the G-buffer depth as a texture.
+    glGenFramebuffers(1, &m_oitNoDepthFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_oitNoDepthFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_oitAccum, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, m_oitRevealage, 0);
+    {
+        unsigned int oitAttachments[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+        glDrawBuffers(2, oitAttachments);
+    }
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        throw std::runtime_error("OIT depth-less framebuffer not complete!");
+    }
+
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     m_gbufferInitialized = true;
 }
@@ -261,6 +275,7 @@ void DeferredRenderer::cleanupGBuffer() {
         glDeleteFramebuffers(1, &m_sceneLightingFBO);
         glDeleteFramebuffers(1, &m_sceneForwardFBO);
         glDeleteFramebuffers(1, &m_oitFBO);
+        glDeleteFramebuffers(1, &m_oitNoDepthFBO);
         m_gbufferInitialized = false;
     }
 }
@@ -511,6 +526,40 @@ void DeferredRenderer::compositeOIT() {
     // clear (which needs depth writes enabled).
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+}
+
+void DeferredRenderer::beginRayVolumeSubPass() {
+    if (!m_gbufferInitialized) {
+        return;
+    }
+
+    // Same accumulation targets as the OIT pass, but the depth-less FBO so the
+    // volume shader can sample the G-buffer depth. Not cleared: the ordinary
+    // transparents already accumulated here this frame.
+    glBindFramebuffer(GL_FRAMEBUFFER, m_oitNoDepthFBO);
+    glViewport(0, 0, m_gbufferWidth, m_gbufferHeight);
+
+    // Match the WBOIT blend: additive accum, multiplicative revealage.
+    glEnable(GL_BLEND);
+    glBlendFunci(0, GL_ONE, GL_ONE);
+    glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_COLOR);
+
+    // Render back faces only, with no hardware depth test: the shader discards
+    // and soft-clamps against the sampled G-buffer depth instead, so the volume
+    // survives the camera being inside it and never hard-clips against surfaces.
+    glDisable(GL_DEPTH_TEST);
+    glCullFace(GL_FRONT);
+}
+
+void DeferredRenderer::endRayVolumeSubPass() {
+    if (!m_gbufferInitialized) {
+        return;
+    }
+
+    // Restore the engine defaults (back-face culling, depth test on) that
+    // compositeOIT and later passes expect.
+    glCullFace(GL_BACK);
     glEnable(GL_DEPTH_TEST);
 }
 

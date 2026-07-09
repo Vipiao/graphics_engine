@@ -6,6 +6,7 @@
 #include "deferredRenderer/DeferredRenderer.h"
 #include "MeshManager2D/MeshManager2D.h"
 #include "instanceHandler/InstanceHandler.h"
+#include "rayVolume/RayVolumeHandler.h"
 #include "shadowRenderer/ShadowRenderer.h"
 #include "utils/HashFunctions.h"
 #include <iostream>
@@ -41,6 +42,9 @@ GraphicsEngine::GraphicsEngine(
     // Create instance handler
     m_instanceHandler = std::make_unique<InstanceHandler>(m_ssboManager.get());
 
+    // Create ray-volume handler (proxy-geometry volumetric effects)
+    m_rayVolumeHandler = std::make_unique<RayVolumeHandler>(m_ssboManager.get());
+
     // Create 2D mesh manager
     m_meshManager2D = std::make_unique<MeshManager2D>(1000);
 
@@ -68,6 +72,7 @@ GraphicsEngine::~GraphicsEngine() {
     // CRITICAL: Destroy OpenGL resources before GraphicsEngineBase destroys the context
     // These must be destroyed in reverse dependency order
     m_meshManager2D.reset();
+    m_rayVolumeHandler.reset();
     m_instanceHandler.reset();
     m_shadowRenderer.reset();
     m_deferredRenderer.reset();
@@ -145,6 +150,19 @@ void GraphicsEngine::renderScene() {
     // scene left bound by the lighting pass.
     m_deferredRenderer->beginOITPass();
     m_instanceHandler->renderOIT(frameParams);
+
+    // Ray-volume sub-pass: proxy-geometry volumetric effects accumulate into the
+    // same WBOIT targets, sampling the opaque depth (no hardware depth test) and
+    // drawing back faces so they survive the camera being inside them.
+    m_deferredRenderer->beginRayVolumeSubPass();
+    m_rayVolumeHandler->render(
+        frameParams,
+        m_deferredRenderer->getGBufferDepthTexture(),
+        m_deferredRenderer->getSceneColorTexture(),
+        m_deferredRenderer->getGBufferWidth(),
+        m_deferredRenderer->getGBufferHeight());
+    m_deferredRenderer->endRayVolumeSubPass();
+
     m_deferredRenderer->compositeOIT();
 
     // Post-processing pass: resample the finished scene to the screen
@@ -266,6 +284,37 @@ void GraphicsEngine::releaseInstanceGeometry(std::weak_ptr<Geometry> geometry) {
 
 int GraphicsEngine::createInstanceTexture(const std::string& texturePath) {
     return m_instanceHandler->createTexture(texturePath);
+}
+
+size_t GraphicsEngine::createRayVolumeMaterial(const std::string& bodySnippetPath) {
+    return m_rayVolumeHandler->createMaterial(bodySnippetPath);
+}
+
+std::weak_ptr<Geometry> GraphicsEngine::createRayVolumeGeometry(const std::string& modelPath,
+                                                                size_t materialIndex) {
+    return m_rayVolumeHandler->createGeometry(modelPath, materialIndex);
+}
+
+void GraphicsEngine::releaseRayVolumeGeometry(std::weak_ptr<Geometry> geometry) {
+    m_rayVolumeHandler->releaseGeometry(geometry);
+}
+
+std::weak_ptr<Instance> GraphicsEngine::addRayVolumeInstance(
+    std::weak_ptr<Geometry> geometry, int ssboIndex, const glm::dvec4& color,
+    const glm::dvec4& state, const glm::dvec4& velocity) {
+    return m_rayVolumeHandler->addInstance(geometry, ssboIndex, color, state, velocity);
+}
+
+void GraphicsEngine::setRayVolumeInstanceValues(std::weak_ptr<Geometry> geometry,
+                                                std::weak_ptr<Instance> instance,
+                                                const glm::dvec4& state,
+                                                const glm::dvec4& velocity) {
+    m_rayVolumeHandler->setInstanceValues(geometry, instance, state, velocity);
+}
+
+void GraphicsEngine::removeRayVolumeInstance(std::weak_ptr<Geometry> geometry,
+                                             std::weak_ptr<Instance> instance) {
+    m_rayVolumeHandler->removeInstance(geometry, instance);
 }
 
 int GraphicsEngine::loadModel(
@@ -440,7 +489,8 @@ std::pair<bool, std::string> GraphicsEngine::reloadShaders() {
    auto [success2, error2] = m_instanceHandler->reloadShaders();
    auto [success3, error3] = m_deferredRenderer->reloadShaders();
    auto [success4, error4] = m_shadowRenderer->reloadShaders();
-   
+   auto [success5, error5] = m_rayVolumeHandler->reloadShaders();
+
    if (!success1) {
       allSuccess = false;
       allErrors += "MeshHandler: " + error1 + "\n";
@@ -457,7 +507,11 @@ std::pair<bool, std::string> GraphicsEngine::reloadShaders() {
       allSuccess = false;
       allErrors += "ShadowRenderer: " + error4 + "\n";
    }
-   
+   if (!success5) {
+      allSuccess = false;
+      allErrors += "RayVolumeHandler: " + error5 + "\n";
+   }
+
    return {allSuccess, allSuccess ?
       "All graphics engine shaders reloaded successfully" : allErrors};
 }
