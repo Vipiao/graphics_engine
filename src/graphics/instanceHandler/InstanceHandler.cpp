@@ -2,7 +2,7 @@
 #include "InstanceHandler.h"
 #include "../ShaderProgram.h"
 #include "../SSBOManager.h"
-#include "math/DekkerArithmetic.h"
+#include "../InstanceFrameUniforms.h"
 #include <algorithm>
 
 InstanceHandler::InstanceHandler(SSBOManager* ssboManager)
@@ -145,42 +145,9 @@ void InstanceHandler::renderGeometryHelper(
     }
     unsigned int programID = static_cast<unsigned int>(currentProgram);
     
-    // Set uniforms (same as MeshHandler::renderGeometry)
-    GLint viewLoc = glGetUniformLocation(programID, "view");
-    GLint projectionLoc = glGetUniformLocation(programID, "projection");
-    GLint frameLoc = glGetUniformLocation(programID, "u_frame");
-    GLint timeLoc = glGetUniformLocation(programID, "u_time");
-    GLint timeRemainderLoc = glGetUniformLocation(programID, "u_timeRemainder");
-    GLint cameraPosHighLoc = glGetUniformLocation(programID, "u_cameraPositionHigh");
-    GLint cameraPosLowLoc = glGetUniformLocation(programID, "u_cameraPositionLow");
+    // Per-frame camera/time uniforms (view, projection, time, Dekker camera).
+    setInstanceFrameUniforms(programID, params);
 
-    // Convert double precision parameters to float precision for OpenGL
-    glm::mat4 viewFloat{ params.view };
-    glm::mat4 projectionFloat{ params.projection };
-
-    if (viewLoc != -1) glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(viewFloat));
-    if (projectionLoc != -1)
-        glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projectionFloat));
-    if (frameLoc != -1) glUniform1ui(frameLoc, params.frame);
-    if (timeLoc != -1) glUniform1ui(timeLoc, params.time);
-    if (timeRemainderLoc != -1)
-        glUniform1f(timeRemainderLoc, static_cast<float>(params.timeRemainder));
-
-    // Set camera position as Dekker number
-    if (cameraPosHighLoc == -1 || cameraPosLowLoc == -1) {
-        throw std::runtime_error("Camera position Dekker uniforms not found in shader");
-    }
-    {
-        typedef DekkerArithmetic<float> DekkerFloat;
-        DekkerFloat::DekkerNumber camX(params.camPos.x);
-        DekkerFloat::DekkerNumber camY(params.camPos.y);
-        DekkerFloat::DekkerNumber camZ(params.camPos.z);
-        glm::vec3 camPosHigh(camX.main, camY.main, camZ.main);
-        glm::vec3 camPosLow(camX.error, camY.error, camZ.error);
-        glUniform3fv(cameraPosHighLoc, 1, glm::value_ptr(camPosHigh));
-        glUniform3fv(cameraPosLowLoc, 1, glm::value_ptr(camPosLow));
-    }
-    
     // Bind all textures
     for (const auto& texture : m_textureManager.m_textures) {
         // Debug check: ensure texture unit is within shader array bounds

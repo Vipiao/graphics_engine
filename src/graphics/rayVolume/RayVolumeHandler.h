@@ -6,6 +6,7 @@
 #include <string>
 #include <utility>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <glad/glad.h>
 #include "../ShaderProgram.h"
 #include "../FrameRenderParams.h"
@@ -42,8 +43,10 @@ public:
                                            size_t materialIndex);
     void releaseGeometry(std::weak_ptr<Geometry> geometry);
 
-    // Per-instance creation carrying the animated value vector. state is the
-    // value at the current time; velocity is its per-time-step derivative.
+    // Per-instance creation carrying the animated value vector (state is the
+    // value at the current time, velocity its per-time-step derivative). The
+    // caller sets the local transform afterward on the returned Instance and
+    // calls Geometry::updateInstanceInBuffer, exactly like the instance handler.
     std::weak_ptr<Instance> addInstance(
         std::weak_ptr<Geometry> geometry, int ssboIndex,
         const glm::dvec4& color = glm::dvec4(1.0),

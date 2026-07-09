@@ -1,6 +1,6 @@
 // RayVolumeHandler.cpp
 #include "RayVolumeHandler.h"
-#include "math/DekkerArithmetic.h"
+#include "../InstanceFrameUniforms.h"
 #include <algorithm>
 #include <stdexcept>
 #include <glm/gtc/type_ptr.hpp>
@@ -128,8 +128,10 @@ std::weak_ptr<Instance> RayVolumeHandler::addInstance(
     VolumeGeometry* volume = findVolume(geometry);
     if (!volume) return {};
 
-    // The base instance buffer holds transform/color; texture units are unused
-    // (the ray-volume material carries a single optional texture instead).
+    // The base instance buffer holds transform/color; ray-volume materials carry
+    // no per-instance texture (texture units unused). The caller sets the local
+    // transform afterward via the Instance handle and Geometry::updateInstanceInBuffer,
+    // exactly like the instance handler.
     std::weak_ptr<Instance> instanceWeak =
         volume->geometry->addInstance(ssboIndex, -1, -1, -1, color, -1);
 
@@ -209,16 +211,7 @@ void RayVolumeHandler::render(const FrameRenderParams& params,
                               unsigned int screenWidth, unsigned int screenHeight) {
     if (m_volumes.empty()) return;
 
-    glm::mat4 viewFloat{ params.view };
-    glm::mat4 projectionFloat{ params.projection };
-    glm::mat4 inverseProjection{ glm::inverse(projectionFloat) };
-
-    typedef DekkerArithmetic<float> DekkerFloat;
-    DekkerFloat::DekkerNumber camX(static_cast<float>(params.camPos.x));
-    DekkerFloat::DekkerNumber camY(static_cast<float>(params.camPos.y));
-    DekkerFloat::DekkerNumber camZ(static_cast<float>(params.camPos.z));
-    glm::vec3 camPosHigh(camX.main, camY.main, camZ.main);
-    glm::vec3 camPosLow(camX.error, camY.error, camZ.error);
+    const glm::mat4 inverseProjection{ glm::inverse(glm::mat4{ params.projection }) };
 
     for (size_t materialIndex = 0; materialIndex < m_materials.size(); ++materialIndex) {
         // Skip materials with no visible instances this frame.
@@ -235,19 +228,12 @@ void RayVolumeHandler::render(const FrameRenderParams& params,
         material.program.use();
         unsigned int id = material.program.getID();
 
-        glUniformMatrix4fv(glGetUniformLocation(id, "view"), 1, GL_FALSE,
-                           glm::value_ptr(viewFloat));
-        glUniformMatrix4fv(glGetUniformLocation(id, "projection"), 1, GL_FALSE,
-                           glm::value_ptr(projectionFloat));
+        // Shared per-frame camera/time uniforms (view, projection, Dekker camera).
+        setInstanceFrameUniforms(id, params);
+
+        // Ray-volume-specific uniforms.
         glUniformMatrix4fv(glGetUniformLocation(id, "u_inverseProjection"), 1, GL_FALSE,
                            glm::value_ptr(inverseProjection));
-        glUniform1ui(glGetUniformLocation(id, "u_time"), static_cast<GLuint>(params.time));
-        glUniform1f(glGetUniformLocation(id, "u_timeRemainder"),
-                    static_cast<float>(params.timeRemainder));
-        glUniform3fv(glGetUniformLocation(id, "u_cameraPositionHigh"), 1,
-                     glm::value_ptr(camPosHigh));
-        glUniform3fv(glGetUniformLocation(id, "u_cameraPositionLow"), 1,
-                     glm::value_ptr(camPosLow));
         glUniform2f(glGetUniformLocation(id, "u_screenSize"),
                     static_cast<float>(screenWidth), static_cast<float>(screenHeight));
 
