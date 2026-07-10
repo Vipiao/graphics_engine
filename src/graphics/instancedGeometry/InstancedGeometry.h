@@ -89,6 +89,10 @@ public:
                  m_vertexCount(0), m_indexCount(0), m_hasIndices(false), m_instanceVBO(0) {}
     ~Geometry();
 
+    // Owns GL buffer/VAO handles; copying would double-delete them.
+    Geometry(const Geometry&) = delete;
+    Geometry& operator=(const Geometry&) = delete;
+
     // Load a mesh from file, combine its sub-meshes, and upload the vertex and
     // instance buffers with the standard attribute layout.
     static std::shared_ptr<Geometry> loadFromFile(const std::string& modelPath);

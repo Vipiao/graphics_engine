@@ -23,6 +23,10 @@ public:
     explicit InstanceHandler(SSBOManager* ssboManager);
     ~InstanceHandler();
 
+    // Owns shader programs and GL handles; copying would double-delete them.
+    InstanceHandler(const InstanceHandler&) = delete;
+    InstanceHandler& operator=(const InstanceHandler&) = delete;
+
     // Texture management
     int createTexture(const std::string& texturePath);
     

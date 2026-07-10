@@ -666,6 +666,14 @@ MeshHandler::Texture MeshHandler::createTexture(std::string texturePath) {
          "MeshHandler: cannot create texture \"" + texturePath +
          "\": maximum number of textures (" + std::to_string(m_maxTextures) + ") reached");
    }
+   // Load image data first; STBImageLoader::load throws if the file cannot be
+   // read, so no GL texture is created for a failed load.
+   int width{ 0 };
+   int height{ 0 };
+   int nrChannels{ 0 };
+   unsigned char* data = STBImageLoader::load(true, texturePath, &width, &height, &nrChannels);
+   assert((nrChannels == 3 || nrChannels == 4) && "texture must be RGB or RGBA");
+
    unsigned int texture;
    glGenTextures(1, &texture);
    glBindTexture(GL_TEXTURE_2D, texture);
@@ -677,11 +685,7 @@ MeshHandler::Texture MeshHandler::createTexture(std::string texturePath) {
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
    //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-   // load image, create texture and generate mipmaps
-
-   int width, height, nrChannels;
-
-   unsigned char* data = STBImageLoader::load(true, texturePath, &width, &height, &nrChannels);
+   // create texture and generate mipmaps
    if (nrChannels == 3) {
       glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
    } else { // nrChannels == 4

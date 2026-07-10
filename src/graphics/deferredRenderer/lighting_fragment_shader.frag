@@ -1,5 +1,7 @@
 #version 460 core
 
+#include "../shared_shaders/phong_lighting.glsl"
+
 out vec4 FragColor;
 
 uniform sampler2D gAlbedo;
@@ -378,23 +380,11 @@ void main() {
    float shadowFactor = calculateShadow(fragPos, normal, lightDir, cascadeIndex);
    //shadowFactor = 1.;
 
-   // Phong lighting model
-   float ambientStrength = 0.3;
-   vec3 ambient = ambientStrength * albedo * ssaoFactor;
-
-   float dd = dot(normal, lightDir);
-   float diff = max(dd, 0.0);
-   //diff -= max(dot(normal, -lightDir), 0.0) * 0.1;
-
-   vec3 diffuse = diff * albedo;// * mix(1.0, ssaoFactor, 0.2);
-   
-   float specularStrength = 0.5;
-   vec3 reflectDir = reflect(-lightDir, normal);
-   float spec = pow(max(min(dot(viewDir, reflectDir) + 0.001, 1.0), 0.0), 128.0);
-   vec3 specular = specularStrength * spec * vec3(1.0);
-   
-   float ff =  mix(1.0, ssaoFactor, 0.2);
-   vec3 result = (ambient + (diffuse + specular) * ff * attenuation * shadowFactor) * occlusionFactor;
+   // Phong lighting model: SSAO darkens the ambient term fully and the
+   // direct terms slightly; shadowing only affects the direct terms.
+   float ff = mix(1.0, ssaoFactor, 0.2);
+   vec3 result = phongLighting(albedo, normal, lightDir, viewDir,
+      ssaoFactor, ff * attenuation * shadowFactor) * occlusionFactor;
    result = mix(result, albedo, emissiveStrength);
    
    // Add screen space reflections with Fresnel

@@ -2,6 +2,7 @@
 #include "RayVolumeHandler.h"
 #include "../InstanceFrameUniforms.h"
 #include <algorithm>
+#include <cassert>
 #include <stdexcept>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
@@ -139,6 +140,8 @@ std::weak_ptr<Instance> RayVolumeHandler::addInstance(
     aux.state = glm::vec4(state);
     aux.velocity = glm::vec4(velocity);
     volume->aux.push_back(aux);
+    assert(volume->aux.size() == volume->geometry->m_instances.size()
+        && "aux stream must stay in lockstep with the instance buffer");
 
     // Grow the auxiliary buffer in lockstep with the base instance buffer.
     glBindBuffer(GL_ARRAY_BUFFER, volume->auxVBO);
@@ -203,6 +206,8 @@ void RayVolumeHandler::removeInstance(std::weak_ptr<Geometry> geometryWeak,
     if (index < volume->aux.size()) {
         uploadAux(*volume, index);
     }
+    assert(volume->aux.size() == volume->geometry->m_instances.size()
+        && "aux stream must stay in lockstep with the instance buffer");
 }
 
 void RayVolumeHandler::render(const FrameRenderParams& params,

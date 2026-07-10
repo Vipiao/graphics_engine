@@ -7,6 +7,9 @@
 // composites with all other transparency. The game supplies the body at the
 // injection marker below; the body must define rayVolumeShade with the
 // signature declared there.
+
+#include "../shared_shaders/wboit_weight.glsl"
+
 layout(location = 0) out vec4 accum;
 layout(location = 1) out float revealage;
 
@@ -70,11 +73,7 @@ void main() {
 
    if (r.alpha < 1.0 / 255.0) discard;
 
-   // WBOIT weight (McGuire & Bavoil 2013), matching the opaque-transparent pass.
-   float z = max(r.weightDepth, 1e-4);
-   float weight = r.alpha * clamp(
-      10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0)),
-      1e-2, 3e3);
+   float weight = wboitWeight(r.alpha, max(r.weightDepth, 1e-4));
 
    accum = vec4(r.color * r.alpha, r.alpha) * weight;
    revealage = r.alpha;

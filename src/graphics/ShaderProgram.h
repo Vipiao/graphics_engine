@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <string>
+#include <vector>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <utility>
@@ -14,32 +16,43 @@ public:
    static constexpr int s_maxTextureUnits{ 32 };
 
 private:
+   // One entry per pipeline stage, indexed by the s_*Stage constants below.
+   // A stage owns its GL shader object until the program is linked.
+   struct Stage {
+      unsigned int m_shader{ 0 };
+      bool m_isLoaded{ false };
+      std::string m_path{};  // kept across reloads; empty for string-loaded stages
+   };
+
+   static constexpr size_t s_vertexStage{ 0 };
+   static constexpr size_t s_fragmentStage{ 1 };
+   static constexpr size_t s_tessControlStage{ 2 };
+   static constexpr size_t s_tessEvaluationStage{ 3 };
+   static constexpr size_t s_geometryStage{ 4 };
+   static constexpr size_t s_stageCount{ 5 };
+
    // Inserts the engine "#define"s (see s_maxTextureUnits) after the "#version" line.
    static std::string injectEngineDefines(std::string code);
 
-   unsigned int m_vertexShader{ 0 };
-   unsigned int m_fragmentShader{ 0 };
-   unsigned int m_tessellationControlShader{ 0 };
-   unsigned int m_tessellationEvaluationShader{ 0 };
-   unsigned int m_geometryShader{ 0 };
+   // Recursively expands '#include "path"' lines, resolving paths relative to the
+   // including file. Each file is expanded at most once per top-level load, so
+   // repeated (and cyclic) includes expand to nothing.
+   static std::string expandIncludes(
+      const std::string& path, std::vector<std::string>& includedPaths);
+
+   // Compiles code as the given stage; throws on compile errors.
+   void loadStage(size_t stageIndex, std::string code);
+   // Loads the file, remembers its path for reloadShaders, and compiles.
+   void loadStageFromPath(size_t stageIndex, std::string path);
+
+   std::array<Stage, s_stageCount> m_stages{};
    unsigned int m_shaderProgram{ 0 };
-
-   bool m_vertexShaderIsLoaded = false;
-   bool m_fragmentShaderIsLoaded = false;
-   bool m_tessellationControlShaderIsLoaded = false;
-   bool m_tessellationEvaluationShaderIsLoaded = false;
-   bool m_geometryShaderIsLoaded = false;
-   bool m_programIsLinked = false;
-
-   // Shader file paths for reloading
-   std::string m_vertexShaderPath;
-   std::string m_fragmentShaderPath;
-   std::string m_tessellationControlShaderPath;
-   std::string m_tessellationEvaluationShaderPath;
-   std::string m_geometryShaderPath;
-   bool m_hasStoredPaths = false;
+   bool m_programIsLinked{ false };
+   bool m_hasStoredPaths{ false };
 
 public:
+   // Loads a shader source file with '#include "path"' lines expanded (see
+   // expandIncludes). Include paths are relative to the file that includes them.
    static std::string loadTextFileFromPath(std::string path);
    static void printWithLineNumbers(std::string code);
    void loadVertexShaderFromPath(std::string vertexCodePath);
@@ -58,7 +71,7 @@ public:
 
    // Shader reloading
    std::pair<bool, std::string> reloadShaders();
-   
+
    // Uniform setters
    void setUniformMatrix4f(const std::string& name, const glm::mat4& matrix);
    void setUniformVec3(const std::string& name, const glm::dvec3& value);
@@ -67,7 +80,11 @@ public:
    void setUniformInt(const std::string& name, int value);
    void setUniformUInt32(const std::string& name, unsigned int value);
    void setUniformBool(const std::string& name, bool value);
-   
+
    ShaderProgram();
    ~ShaderProgram();
+
+   // Owns GL shader/program handles; copying would double-delete them.
+   ShaderProgram(const ShaderProgram&) = delete;
+   ShaderProgram& operator=(const ShaderProgram&) = delete;
 };

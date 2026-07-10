@@ -2,23 +2,77 @@
 #include "ShaderProgram.h"
 
 
+#include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <glm/gtc/type_ptr.hpp>
 
-std::string ShaderProgram::loadTextFileFromPath(std::string path) {
+namespace {
+// GL type and log label per stage, indexed like ShaderProgram's stage constants.
+struct StageInfo {
+   unsigned int m_glType;
+   const char* m_label;
+};
+constexpr std::array<StageInfo, 5> s_stageInfo{ {
+   { GL_VERTEX_SHADER, "VERTEX" },
+   { GL_FRAGMENT_SHADER, "FRAGMENT" },
+   { GL_TESS_CONTROL_SHADER, "TESS_CONTR" },
+   { GL_TESS_EVALUATION_SHADER, "TESS_EVAL" },
+   { GL_GEOMETRY_SHADER, "GEOMETRY" },
+} };
+}
+
+std::string ShaderProgram::expandIncludes(
+   const std::string& path, std::vector<std::string>& includedPaths
+) {
+   std::error_code error{};
+   std::filesystem::path canonical{ std::filesystem::weakly_canonical(path, error) };
+   std::string canonicalPath{ error ? path : canonical.string() };
+   // Include-once: a file already expanded in this load (including via a cycle)
+   // expands to nothing.
+   if (std::find(includedPaths.begin(), includedPaths.end(), canonicalPath)
+         != includedPaths.end()) {
+      return "";
+   }
+   includedPaths.push_back(canonicalPath);
+
    std::ifstream ifs(path);
    if (ifs.fail()) {
       std::cout << "ERROR: Could not find file at: " << path << std::endl;
       throw std::runtime_error("ERROR: Could not find file at: " + path);
    }
-   std::string text((std::istreambuf_iterator<char>(ifs)),
-      (std::istreambuf_iterator<char>()));
-   return text;
+
+   std::filesystem::path directory{ std::filesystem::path{ path }.parent_path() };
+   std::string result{};
+   for (std::string line; std::getline(ifs, line); ) {
+      size_t firstChar{ line.find_first_not_of(" \t") };
+      if (firstChar != std::string::npos && line.compare(firstChar, 8, "#include") == 0) {
+         size_t openQuote{ line.find('"', firstChar + 8) };
+         size_t closeQuote{ openQuote == std::string::npos
+            ? std::string::npos : line.find('"', openQuote + 1) };
+         if (closeQuote == std::string::npos) {
+            std::cout << "ERROR: Malformed #include in " << path << ": " << line << std::endl;
+            throw std::runtime_error("ERROR: Malformed #include in " + path);
+         }
+         std::string includePath{ line.substr(openQuote + 1, closeQuote - openQuote - 1) };
+         result += expandIncludes((directory / includePath).string(), includedPaths);
+         continue;
+      }
+      result += line;
+      result += '\n';
+   }
+   return result;
+}
+
+std::string ShaderProgram::loadTextFileFromPath(std::string path) {
+   std::vector<std::string> includedPaths{};
+   return expandIncludes(path, includedPaths);
 }
 
 std::string ShaderProgram::injectEngineDefines(std::string code) {
@@ -50,176 +104,98 @@ void ShaderProgram::printWithLineNumbers(std::string code) {
    return;
 }
 
-void ShaderProgram::loadVertexShaderFromPath(std::string vertexCodePath) {
-   std::string vertexCode(ShaderProgram::loadTextFileFromPath(vertexCodePath));
-   m_vertexShaderPath = vertexCodePath;
+void ShaderProgram::loadStage(size_t stageIndex, std::string code) {
+   static_assert(s_stageInfo.size() == s_stageCount,
+      "stage info table must cover every stage");
+   const StageInfo& info{ s_stageInfo[stageIndex] };
+   Stage& stage{ m_stages[stageIndex] };
+
+   code = injectEngineDefines(code);
+   stage.m_shader = glCreateShader(info.m_glType);
+   const char* codePtr{ code.c_str() };
+   glShaderSource(stage.m_shader, 1, &codePtr, NULL);
+   glCompileShader(stage.m_shader);
+
+   int success{ 0 };
+   char infoLog[512];
+   glGetShaderiv(stage.m_shader, GL_COMPILE_STATUS, &success);
+   if (!success) {
+      glGetShaderInfoLog(stage.m_shader, 512, NULL, infoLog);
+      printWithLineNumbers(code);
+      std::string label{ info.m_label };
+      std::cout << std::endl << "ERROR::SHADER::" << label << "::COMPILATION_FAILED\n"
+         << infoLog << std::endl;
+      throw std::runtime_error("ERROR: SHADER::" + label + "::COMPILATION_FAILED.");
+   }
+   stage.m_isLoaded = true;
+}
+
+void ShaderProgram::loadStageFromPath(size_t stageIndex, std::string path) {
+   std::string code{ loadTextFileFromPath(path) };
+   m_stages[stageIndex].m_path = path;
    m_hasStoredPaths = true;
-   loadVertexShader(vertexCode);
+   loadStage(stageIndex, code);
+}
+
+void ShaderProgram::loadVertexShaderFromPath(std::string vertexCodePath) {
+   loadStageFromPath(s_vertexStage, vertexCodePath);
 }
 
 void ShaderProgram::loadFragmentShaderFromPath(std::string fragmentCodePath) {
-   std::string fragmentCode(ShaderProgram::loadTextFileFromPath(fragmentCodePath));
-   m_fragmentShaderPath = fragmentCodePath;
-   m_hasStoredPaths = true;
-   loadFragmentShader(fragmentCode);
+   loadStageFromPath(s_fragmentStage, fragmentCodePath);
 }
 
 void ShaderProgram::loadTessellationControlShaderFromPath(std::string tessContrCodePath) {
-   std::string tessCode(ShaderProgram::loadTextFileFromPath(tessContrCodePath));
-   m_tessellationControlShaderPath = tessContrCodePath;
-   m_hasStoredPaths = true;
-   loadTessellationControlShader(tessCode);
+   loadStageFromPath(s_tessControlStage, tessContrCodePath);
 }
 
 void ShaderProgram::loadTessellationEvaluationShaderFromPath(std::string tessEvalCodePath) {
-   std::string tessCode(ShaderProgram::loadTextFileFromPath(tessEvalCodePath));
-   m_tessellationEvaluationShaderPath = tessEvalCodePath;
-   m_hasStoredPaths = true;
-   loadTessellationEvaluationShader(tessCode);
+   loadStageFromPath(s_tessEvaluationStage, tessEvalCodePath);
 }
 
 void ShaderProgram::loadGeometryShaderFromPath(std::string geometryCodePath) {
-   std::string geometryCode(ShaderProgram::loadTextFileFromPath(geometryCodePath));
-   m_geometryShaderPath = geometryCodePath;
-   m_hasStoredPaths = true;
-   loadGeometryShader(geometryCode);
+   loadStageFromPath(s_geometryStage, geometryCodePath);
 }
 
 void ShaderProgram::loadVertexShader(std::string vertexCode) {
-   // vertex shader
-   vertexCode = injectEngineDefines(vertexCode);
-   m_vertexShader = glCreateShader(GL_VERTEX_SHADER);
-   const char* vertCode = vertexCode.c_str();
-   glShaderSource(m_vertexShader, 1, &vertCode, NULL);
-   glCompileShader(m_vertexShader);
-   // Check for shader compile errors.
-   int success;
-   char infoLog[512];
-   glGetShaderiv(m_vertexShader, GL_COMPILE_STATUS, &success);
-   if (!success) {
-      glGetShaderInfoLog(m_vertexShader, 512, NULL, infoLog);
-      ShaderProgram::printWithLineNumbers(vertCode);
-      std::cout << std::endl << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n" << infoLog << std::endl;
-      throw std::runtime_error("ERROR: SHADER::VERTEX::COMPILATION_FAILED.");
-   }
-   m_vertexShaderIsLoaded = true;
+   loadStage(s_vertexStage, vertexCode);
 }
 
 void ShaderProgram::loadFragmentShader(std::string fragmentCode) {
-   // fragment shader
-   fragmentCode = injectEngineDefines(fragmentCode);
-   m_fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-   const char* fragCode = fragmentCode.c_str();
-   glShaderSource(m_fragmentShader, 1, &fragCode, NULL);
-   glCompileShader(m_fragmentShader);
-   // Check for shader compile errors.
-   int success;
-   char infoLog[512];
-   glGetShaderiv(m_fragmentShader, GL_COMPILE_STATUS, &success);
-   if (!success) {
-      glGetShaderInfoLog(m_fragmentShader, 512, NULL, infoLog);
-      ShaderProgram::printWithLineNumbers(fragmentCode);
-      std::cout << std::endl << "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
-      throw std::runtime_error("ERROR: SHADER::FRAGMENT::COMPILATION_FAILED.");
-   }
-   m_fragmentShaderIsLoaded = true;
+   loadStage(s_fragmentStage, fragmentCode);
 }
 
 void ShaderProgram::loadTessellationControlShader(std::string tessContrCode) {
-   // Tesselation control shader.
-   tessContrCode = injectEngineDefines(tessContrCode);
-   m_tessellationControlShader = glCreateShader(GL_TESS_CONTROL_SHADER);
-   const char* tessCode = tessContrCode.c_str();
-   glShaderSource(m_tessellationControlShader, 1, &tessCode, NULL);
-   glCompileShader(m_tessellationControlShader);
-   // Check for shader compile errors.
-   int success;
-   char infoLog[512];
-   glGetShaderiv(m_tessellationControlShader, GL_COMPILE_STATUS, &success);
-   if (!success) {
-      glGetShaderInfoLog(m_tessellationControlShader, 512, NULL, infoLog);
-      ShaderProgram::printWithLineNumbers(tessCode);
-      std::cout << std::endl << "ERROR::SHADER::TESS_CONTR::COMPILATION_FAILED\n" << infoLog << std::endl;
-      throw std::runtime_error("ERROR: SHADER::TESS_CONTR::COMPILATION_FAILED.");
-   }
-   m_tessellationControlShaderIsLoaded = true;
+   loadStage(s_tessControlStage, tessContrCode);
 }
 
 void ShaderProgram::loadTessellationEvaluationShader(std::string tessEvalCode) {
-   // Tesselation evaluation shader.
-   tessEvalCode = injectEngineDefines(tessEvalCode);
-   m_tessellationEvaluationShader = glCreateShader(GL_TESS_EVALUATION_SHADER);
-   const char* tessCode = tessEvalCode.c_str();
-   glShaderSource(m_tessellationEvaluationShader, 1, &tessCode, NULL);
-   glCompileShader(m_tessellationEvaluationShader);
-   // Check for shader compile errors.
-   int success;
-   char infoLog[512];
-   glGetShaderiv(m_tessellationEvaluationShader, GL_COMPILE_STATUS, &success);
-   if (!success) {
-      glGetShaderInfoLog(m_tessellationEvaluationShader, 512, NULL, infoLog);
-      ShaderProgram::printWithLineNumbers(tessCode);
-      std::cout << std::endl << "ERROR::SHADER::TESS_EVAL::COMPILATION_FAILED\n" << infoLog << std::endl;
-      throw std::runtime_error("ERROR: SHADER::TESS_EVAL::COMPILATION_FAILED.");
-   }
-   m_tessellationEvaluationShaderIsLoaded = true;
+   loadStage(s_tessEvaluationStage, tessEvalCode);
 }
 
 void ShaderProgram::loadGeometryShader(std::string geometryCode) {
-   // Geometry shader.
-   geometryCode = injectEngineDefines(geometryCode);
-   m_geometryShader = glCreateShader(GL_GEOMETRY_SHADER);
-   const char* geomCode = geometryCode.c_str();
-   glShaderSource(m_geometryShader, 1, &geomCode, NULL);
-   glCompileShader(m_geometryShader);
-   // Check for shader compile errors.
-   int success;
-   char infoLog[512];
-   glGetShaderiv(m_geometryShader, GL_COMPILE_STATUS, &success);
-   if (!success) {
-      glGetShaderInfoLog(m_geometryShader, 512, NULL, infoLog);
-      ShaderProgram::printWithLineNumbers(geomCode);
-      std::cout << std::endl << "ERROR::SHADER::GEOMETRY::COMPILATION_FAILED\n" << infoLog << std::endl;
-      throw std::runtime_error("ERROR: SHADER::GEOMETRY::COMPILATION_FAILED.");
-   }
-   m_geometryShaderIsLoaded = true;
+   loadStage(s_geometryStage, geometryCode);
 }
 
 void ShaderProgram::linkShaders() {
-   if (!m_vertexShaderIsLoaded) {
+   if (!m_stages[s_vertexStage].m_isLoaded) {
       std::cout << "ERROR: Cannot link shader program before loading vertex shader." << std::endl;
       throw std::runtime_error("ERROR: Cannot link shader program before loading vertex shader.");
    }
-   if (!m_fragmentShaderIsLoaded) {
+   if (!m_stages[s_fragmentStage].m_isLoaded) {
       std::cout << "ERROR: Cannot link shader program before loading fragment shader." << std::endl;
       throw std::runtime_error("ERROR: Cannot link shader program before loading fragment shader.");
    }
-   //if (!m_tesselationControlShaderIsLoaded) {
-   //   throw std::runtime_error (
-   //      "ERROR: Cannot link shader program before loading tesselation shader."
-   //   );
-   //}
-   //if (!m_tesselationEvaluationShaderIsLoaded) {
-   //   throw std::runtime_error (
-   //      "ERROR: Cannot link shader program before loading tesselation shader."
-   //   );
-   //}
    // link shaders
    m_shaderProgram = glCreateProgram();
-   glAttachShader(m_shaderProgram, m_vertexShader);
-   glAttachShader(m_shaderProgram, m_fragmentShader);
-   if (m_tessellationControlShaderIsLoaded) {
-      glAttachShader(m_shaderProgram, m_tessellationControlShader);
-   }
-   if (m_tessellationEvaluationShaderIsLoaded) {
-      glAttachShader(m_shaderProgram, m_tessellationEvaluationShader);
-   }
-   if (m_geometryShaderIsLoaded) {
-      glAttachShader(m_shaderProgram, m_geometryShader);
+   for (const Stage& stage : m_stages) {
+      if (stage.m_isLoaded) {
+         glAttachShader(m_shaderProgram, stage.m_shader);
+      }
    }
    glLinkProgram(m_shaderProgram);
    // check for linking errors
-   int success;
+   int success{ 0 };
    char infoLog[512];
    glGetProgramiv(m_shaderProgram, GL_LINK_STATUS, &success);
    if (!success) {
@@ -227,16 +203,11 @@ void ShaderProgram::linkShaders() {
       std::cout << "ERROR::SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
       throw std::runtime_error("ERROR: SHADER::PROGRAM::LINKING_FAILED.");
    }
-   glDeleteShader(m_vertexShader);
-   glDeleteShader(m_fragmentShader);
-   if (m_tessellationControlShaderIsLoaded) {
-      glDeleteShader(m_tessellationControlShader);
-   }
-   if (m_tessellationEvaluationShaderIsLoaded) {
-      glDeleteShader(m_tessellationEvaluationShader);
-   }
-   if (m_geometryShaderIsLoaded) {
-      glDeleteShader(m_geometryShader);
+   // The program keeps the linked binaries; the stage shader objects can go.
+   for (const Stage& stage : m_stages) {
+      if (stage.m_isLoaded) {
+         glDeleteShader(stage.m_shader);
+      }
    }
    m_programIsLinked = true;
 }
@@ -261,143 +232,69 @@ std::pair<bool, std::string> ShaderProgram::reloadShaders() {
    if (!m_hasStoredPaths) {
       return {false, "Cannot reload shaders: no file paths stored (shaders were loaded from strings)"};
    }
-   
-   std::string errorMessages;
-   bool hasErrors = false;
-   
-   // Store old shader IDs
-   unsigned int oldVertexShader = m_vertexShader;
-   unsigned int oldFragmentShader = m_fragmentShader;
-   unsigned int oldTessellationControlShader = m_tessellationControlShader;
-   unsigned int oldTessellationEvaluationShader = m_tessellationEvaluationShader;
-   unsigned int oldGeometryShader = m_geometryShader;
-   unsigned int oldShaderProgram = m_shaderProgram;
-   bool oldProgramIsLinked = m_programIsLinked;
-   
-   // Store old load states
-   bool oldVertexShaderIsLoaded = m_vertexShaderIsLoaded;
-   bool oldFragmentShaderIsLoaded = m_fragmentShaderIsLoaded;
-   bool oldTessellationControlShaderIsLoaded = m_tessellationControlShaderIsLoaded;
-   bool oldTessellationEvaluationShaderIsLoaded = m_tessellationEvaluationShaderIsLoaded;
-   bool oldGeometryShaderIsLoaded = m_geometryShaderIsLoaded;
-   
-   // Reset states for new loading
-   m_vertexShader = 0;
-   m_fragmentShader = 0;
-   m_tessellationControlShader = 0;
-   m_tessellationEvaluationShader = 0;
-   m_geometryShader = 0;
+
+   std::string errorMessages{};
+   bool hasErrors{ false };
+
+   // Snapshot so a failed reload can restore the working program.
+   std::array<Stage, s_stageCount> oldStages{ m_stages };
+   unsigned int oldShaderProgram{ m_shaderProgram };
+   bool oldProgramIsLinked{ m_programIsLinked };
+
+   // Reset for the new load; stage paths are kept, they are what reload reads.
+   for (Stage& stage : m_stages) {
+      stage.m_shader = 0;
+      stage.m_isLoaded = false;
+   }
    m_shaderProgram = 0;
    m_programIsLinked = false;
-   m_vertexShaderIsLoaded = false;
-   m_fragmentShaderIsLoaded = false;
-   m_tessellationControlShaderIsLoaded = false;
-   m_tessellationEvaluationShaderIsLoaded = false;
-   m_geometryShaderIsLoaded = false;
-   
-   try {
-      // Try to reload vertex shader if it was loaded
-      if (oldVertexShaderIsLoaded && !m_vertexShaderPath.empty()) {
-         try {
-            std::string vertexCode(ShaderProgram::loadTextFileFromPath(m_vertexShaderPath));
-            loadVertexShader(vertexCode);
-         } catch (const std::exception& e) {
-            hasErrors = true;
-            errorMessages += "Vertex shader reload failed: " + std::string(e.what()) + "\n";
-         }
+
+   // Reload every stage that was loaded from a file. Stages loaded from strings
+   // (empty path) cannot be reloaded and stay unloaded, which fails the link
+   // below if they were required.
+   for (size_t ii = 0; ii < s_stageCount; ii++) {
+      if (!oldStages[ii].m_isLoaded || m_stages[ii].m_path.empty()) {
+         continue;
       }
-      
-      // Try to reload fragment shader if it was loaded
-      if (oldFragmentShaderIsLoaded && !m_fragmentShaderPath.empty()) {
-         try {
-            std::string fragmentCode(ShaderProgram::loadTextFileFromPath(m_fragmentShaderPath));
-            loadFragmentShader(fragmentCode);
-         } catch (const std::exception& e) {
-            hasErrors = true;
-            errorMessages += "Fragment shader reload failed: " + std::string(e.what()) + "\n";
-         }
+      try {
+         loadStageFromPath(ii, m_stages[ii].m_path);
+      } catch (const std::exception& e) {
+         hasErrors = true;
+         errorMessages += std::string{ s_stageInfo[ii].m_label }
+            + " shader reload failed: " + e.what() + "\n";
       }
-      
-      // Try to reload tessellation control shader if it was loaded
-      if (oldTessellationControlShaderIsLoaded && !m_tessellationControlShaderPath.empty()) {
-         try {
-            std::string tessCode(ShaderProgram::loadTextFileFromPath(m_tessellationControlShaderPath));
-            loadTessellationControlShader(tessCode);
-         } catch (const std::exception& e) {
-            hasErrors = true;
-            errorMessages += "Tessellation control shader reload failed: " + std::string(e.what()) + "\n";
-         }
-      }
-      
-      // Try to reload tessellation evaluation shader if it was loaded
-      if (oldTessellationEvaluationShaderIsLoaded && !m_tessellationEvaluationShaderPath.empty()) {
-         try {
-            std::string tessCode(ShaderProgram::loadTextFileFromPath(m_tessellationEvaluationShaderPath));
-            loadTessellationEvaluationShader(tessCode);
-         } catch (const std::exception& e) {
-            hasErrors = true;
-            errorMessages += "Tessellation evaluation shader reload failed: " + std::string(e.what()) + "\n";
-         }
-      }
-      
-      // Try to reload geometry shader if it was loaded
-      if (oldGeometryShaderIsLoaded && !m_geometryShaderPath.empty()) {
-         try {
-            std::string geometryCode(ShaderProgram::loadTextFileFromPath(m_geometryShaderPath));
-            loadGeometryShader(geometryCode);
-         } catch (const std::exception& e) {
-            hasErrors = true;
-            errorMessages += "Geometry shader reload failed: " + std::string(e.what()) + "\n";
-         }
-      }
-      
-      // Try to link the new shaders
-      if (m_vertexShaderIsLoaded && m_fragmentShaderIsLoaded) {
-         try {
-            linkShaders();
-         } catch (const std::exception& e) {
-            hasErrors = true;
-            errorMessages += "Shader linking failed: " + std::string(e.what()) + "\n";
-         }
-      }
-      
-   } catch (...) {
-      hasErrors = true;
-      errorMessages += "Unexpected error during shader reload\n";
    }
-   
-   // If there were errors, restore old shaders and clean up failed new ones
+
+   if (m_stages[s_vertexStage].m_isLoaded && m_stages[s_fragmentStage].m_isLoaded) {
+      try {
+         linkShaders();
+      } catch (const std::exception& e) {
+         hasErrors = true;
+         errorMessages += "Shader linking failed: " + std::string{ e.what() } + "\n";
+      }
+   }
+
    if (hasErrors || !m_programIsLinked) {
-      // Clean up any partially created new shaders
-      if (m_vertexShader != 0) glDeleteShader(m_vertexShader);
-      if (m_fragmentShader != 0) glDeleteShader(m_fragmentShader);
-      if (m_tessellationControlShader != 0) glDeleteShader(m_tessellationControlShader);
-      if (m_tessellationEvaluationShader != 0) glDeleteShader(m_tessellationEvaluationShader);
-      if (m_geometryShader != 0) glDeleteShader(m_geometryShader);
-      if (m_shaderProgram != 0) glDeleteProgram(m_shaderProgram);
-      
-      // Restore old shaders
-      m_vertexShader = oldVertexShader;
-      m_fragmentShader = oldFragmentShader;
-      m_tessellationControlShader = oldTessellationControlShader;
-      m_tessellationEvaluationShader = oldTessellationEvaluationShader;
-      m_geometryShader = oldGeometryShader;
+      // Clean up whatever the failed reload created, then restore the old program.
+      for (const Stage& stage : m_stages) {
+         if (stage.m_shader != 0) {
+            glDeleteShader(stage.m_shader);
+         }
+      }
+      if (m_shaderProgram != 0) {
+         glDeleteProgram(m_shaderProgram);
+      }
+      m_stages = oldStages;
       m_shaderProgram = oldShaderProgram;
       m_programIsLinked = oldProgramIsLinked;
-      m_vertexShaderIsLoaded = oldVertexShaderIsLoaded;
-      m_fragmentShaderIsLoaded = oldFragmentShaderIsLoaded;
-      m_tessellationControlShaderIsLoaded = oldTessellationControlShaderIsLoaded;
-      m_tessellationEvaluationShaderIsLoaded = oldTessellationEvaluationShaderIsLoaded;
-      m_geometryShaderIsLoaded = oldGeometryShaderIsLoaded;
-      
       return {false, errorMessages.empty() ? "Shader reload failed" : errorMessages};
-   } else {
-      // Success! Clean up old shaders
-      if (oldShaderProgram != 0) glDeleteProgram(oldShaderProgram);
-      // Note: individual shaders are cleaned up by linkShaders()
-      
-      return {true, "Shaders reloaded successfully"};
    }
+
+   // Success: the old program (and its attached shaders) can go.
+   if (oldShaderProgram != 0) {
+      glDeleteProgram(oldShaderProgram);
+   }
+   return {true, "Shaders reloaded successfully"};
 }
 
 // Uniform setters
@@ -456,33 +353,17 @@ void ShaderProgram::setUniformBool(const std::string& name, bool value) {
 
 
 ShaderProgram::ShaderProgram() {
-   //std::cout << std::endl << "++ Shader program" << std::endl << std::endl;
 }
 
 ShaderProgram::~ShaderProgram() {
-   //std::cout << std::endl << "-- Shader program" << std::endl << std::endl;
    if (m_programIsLinked) {
       glDeleteProgram(m_shaderProgram);
    } else {
-      if (m_vertexShader != 0) {
-         // 0 means it is not created yet.
-         glDeleteShader(m_vertexShader);
-      }
-      if (m_fragmentShader != 0) {
-         // 0 means it is not created yet.
-         glDeleteShader(m_fragmentShader);
-      }
-      if (m_tessellationControlShader != 0) {
-         // 0 means it is not created yet.
-         glDeleteShader(m_tessellationControlShader);
-      }
-      if (m_tessellationEvaluationShader != 0) {
-         // 0 means it is not created yet.
-         glDeleteShader(m_tessellationEvaluationShader);
-      }
-      if (m_geometryShader != 0) {
-         // 0 means it is not created yet.
-         glDeleteShader(m_geometryShader);
+      for (const Stage& stage : m_stages) {
+         if (stage.m_shader != 0) {
+            // 0 means it is not created yet.
+            glDeleteShader(stage.m_shader);
+         }
       }
    }
 }

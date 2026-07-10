@@ -7,6 +7,9 @@
 #include <vector>
 #include <cstdint>
 
+// CPU-side twin of the GLSL MeshData in
+// src/graphics/shared_shaders/mesh_transform.glsl (std430 layout). Any field
+// change must be mirrored there, keeping the total size a multiple of 16.
 #pragma pack(push, 1)
 struct MeshData {
     glm::vec4 positionHigh{};        // Offset= 0, size=16 bytes. High part of Dekker position
@@ -26,6 +29,9 @@ struct MeshData {
 }; // Make sure to pad so size is divisible by 16 because you have a vec4.
 #pragma pack(pop)
 
+static_assert(sizeof(MeshData) == 144,
+    "MeshData must match the 144-byte std430 layout in mesh_transform.glsl");
+
 /**
  * @brief Manages a shared SSBO for mesh and instance transformation data
  * 
@@ -44,6 +50,10 @@ public:
      * @brief Destructor - cleans up OpenGL resources
      */
     ~SSBOManager();
+
+    // Owns the SSBO handle; copying would double-delete it.
+    SSBOManager(const SSBOManager&) = delete;
+    SSBOManager& operator=(const SSBOManager&) = delete;
     
     /**
      * @brief Allocate a new index for storing MeshData

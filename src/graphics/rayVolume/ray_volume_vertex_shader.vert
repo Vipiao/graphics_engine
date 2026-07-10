@@ -6,22 +6,7 @@
 // stage, and forwards the per-instance animated values so the fragment scaffold
 // can shade the volume along the view ray.
 
-struct MeshData {
-   vec4 positionHigh;
-   vec4 positionLow;
-   vec4 velocity;
-   vec4 orientation;         // Quaternion
-   vec4 angVel;              // Unit axis (xyz), angle rate (w)
-   vec4 centerOfRotation;
-   vec4 scale;               // xyz = scale, w = padding
-   uint time;
-   int colorTextureUnit;
-   int normalTextureUnit;
-   int materialTextureUnit;
-   float emissiveScalar;
-   int maskTextureUnit;
-   uint padding[2];
-};
+#include "../shared_shaders/mesh_transform.glsl"
 
 layout(std430, binding = 0) buffer MeshDataBuffer {
    MeshData meshDataBuffer[];
@@ -64,39 +49,6 @@ flat out mat3 vert_viewBasis;       // instance orientation: local -> view direc
 // geometry maps to the effect, and any coverage margin needed to avoid clipping
 // soft edges is the author's responsibility (mesh resolution / sizing).
 
-mat3 fromQuaternion(vec4 q) {
-   float xx = q.x*q.x, yy = q.y*q.y, zz = q.z*q.z;
-   float xy = q.x*q.y, xz = q.x*q.z, yz = q.y*q.z;
-   float wx = q.w*q.x, wy = q.w*q.y, wz = q.w*q.z;
-   return mat3(
-      1.0 - 2.0*(yy+zz),       2.0*(xy+wz),       2.0*(xz-wy),
-            2.0*(xy-wz), 1.0 - 2.0*(xx+zz),       2.0*(yz+wx),
-            2.0*(xz+wy),       2.0*(yz-wx), 1.0 - 2.0*(xx+yy));
-}
-
-mat3 rotationMatrix(float angle, vec3 axis) {
-   float c = cos(angle), s = sin(angle);
-   float x = axis.x, y = axis.y, z = axis.z;
-   return mat3(
-      c + x*x*(1.0-c),     y*x*(1.0-c) + z*s, z*x*(1.0-c) - y*s,
-      x*y*(1.0-c) - z*s,   c + y*y*(1.0-c),   z*y*(1.0-c) + x*s,
-      x*z*(1.0-c) + y*s,   y*z*(1.0-c) - x*s, c + z*z*(1.0-c));
-}
-
-// Dekker subtraction: result = a - b, carrying the low-order error term.
-vec3 dekkerSubtract(vec3 aHigh, vec3 aLow, vec3 bHigh, vec3 bLow) {
-   precise vec3 r = aHigh - bHigh;
-   precise vec3 error;
-   for (int i = 0; i < 3; i++) {
-      if (abs(aHigh[i]) > abs(bHigh[i])) {
-         error[i] = aHigh[i] - r[i] - bHigh[i] + aLow[i] - bLow[i];
-      } else {
-         error[i] = -bHigh[i] - r[i] + aHigh[i] + aLow[i] - bLow[i];
-      }
-   }
-   return r + error;
-}
-
 void main() {
    MeshData meshData = meshDataBuffer[ssboIndex];
 
@@ -114,14 +66,13 @@ void main() {
    meshPositionL += meshData.velocity.xyz * deltaTimeFloat;
 
    mat3 worldOrientation =
-      rotationMatrix(meshData.angVel.w * deltaTimeFloat, meshData.angVel.xyz)
-      * fromQuaternion(meshData.orientation);
+      calculatePhysicsOrientation(meshData.orientation, meshData.angVel, deltaTimeFloat);
 
    vec3 cor = meshData.centerOfRotation.xyz;
    vec3 worldPos =
-      worldOrientation * (localPos * meshData.scale.xyz - cor) + cor;
+      applyRotationTransform(worldOrientation, localPos * meshData.scale.xyz, cor);
    vec3 worldCenter =
-      worldOrientation * (localPosition * meshData.scale.xyz - cor) + cor;
+      applyRotationTransform(worldOrientation, localPosition * meshData.scale.xyz, cor);
 
    vert_viewPos = (view * vec4(meshPositionL + worldPos, 1.0)).xyz;
    vert_centerViewPos = (view * vec4(meshPositionL + worldCenter, 1.0)).xyz;

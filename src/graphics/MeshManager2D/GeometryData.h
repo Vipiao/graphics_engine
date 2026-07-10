@@ -21,6 +21,10 @@ public:
                  bool enableTransparency = false,
                  size_t maxInstances = 1000);
     ~GeometryData();
+
+    // Owns GL buffer/VAO handles; copying would double-delete them.
+    GeometryData(const GeometryData&) = delete;
+    GeometryData& operator=(const GeometryData&) = delete;
     
     // Instance management
     std::weak_ptr<GeometryInstance> createInstance();

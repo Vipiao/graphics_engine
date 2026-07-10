@@ -285,10 +285,7 @@ void DeferredRenderer::beginGeometryPass() {
     if (!m_gbufferInitialized) {
         return;
     }
-    if (!m_gbufferInitialized) {
-        throw std::runtime_error("G-buffer not initialized. Call setupGBuffer() first.");
-    }
-    
+
     // Bind G-buffer for rendering
     glBindFramebuffer(GL_FRAMEBUFFER, m_gbufferFBO);
     glViewport(0, 0, m_gbufferWidth, m_gbufferHeight);
