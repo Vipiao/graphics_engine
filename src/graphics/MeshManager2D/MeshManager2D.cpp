@@ -1,12 +1,12 @@
 // src/graphics/MeshManager2D.cpp
 #include "MeshManager2D.h"
 #include "../STBImageLoader.h"
+#include <algorithm>
 #include <iostream>
 #include <fstream>
 #include <sstream>
 
-MeshManager2D::MeshManager2D(size_t maxInstancesPerGeometry)
-    : m_maxInstancesPerGeometry(maxInstancesPerGeometry) {
+MeshManager2D::MeshManager2D() {
     initializeShaders();
 }
 
@@ -156,22 +156,22 @@ int MeshManager2D::createTexture(const std::string& path) {
     return m_textureManager.createTexture(path);
 }
 
-std::weak_ptr<GeometryData> MeshManager2D::loadMesh(const std::string& geometryPath,
-                                                   const std::string& texturePath,
-                                                   int textureUnit,
-                                                   bool enableTransparency) {
+std::weak_ptr<Geometry2D> MeshManager2D::loadMesh(const std::string& geometryPath,
+                                                 const std::string& texturePath,
+                                                 int textureUnit,
+                                                 bool enableTransparency) {
     // Load geometry data using AssimpLoader
     std::vector<AssetMeshData> meshDataList;
     try {
         AssimpLoader::load(geometryPath, &meshDataList);
     } catch (const std::exception& e) {
         std::cerr << "MeshManager2D: Failed to load geometry from " << geometryPath << ": " << e.what() << std::endl;
-        return std::weak_ptr<GeometryData>();
+        return std::weak_ptr<Geometry2D>();
     }
-    
+
     if (meshDataList.empty()) {
         std::cerr << "MeshManager2D: No mesh data found in " << geometryPath << std::endl;
-        return std::weak_ptr<GeometryData>();
+        return std::weak_ptr<Geometry2D>();
     }
     
     // Use first mesh for 2D (assuming single mesh)
@@ -199,7 +199,7 @@ std::weak_ptr<GeometryData> MeshManager2D::loadMesh(const std::string& geometryP
     
     if (vertices.empty() || indices.empty()) {
         std::cerr << "MeshManager2D: Failed to load geometry from " << geometryPath << std::endl;
-        return std::weak_ptr<GeometryData>();
+        return std::weak_ptr<Geometry2D>();
     }
     
     // Handle texture
@@ -216,13 +216,27 @@ std::weak_ptr<GeometryData> MeshManager2D::loadMesh(const std::string& geometryP
         throw std::runtime_error("Error: Setting textures not implemented.");
     }
     
-    auto geometry = std::make_shared<GeometryData>(vertices, indices,
-                                                  textureId, finalTextureUnit, enableTransparency, m_maxInstancesPerGeometry);
-    
-    std::weak_ptr<GeometryData> result = geometry;
+    auto geometry = std::make_shared<Geometry2D>(vertices, indices, textureId,
+                                                 finalTextureUnit, enableTransparency);
+
+    std::weak_ptr<Geometry2D> result = geometry;
     m_geometries.push_back(std::move(geometry));
-    
+
     return result;
+}
+
+void MeshManager2D::releaseGeometry(std::weak_ptr<Geometry2D> geometryWeak) {
+    auto geometry = geometryWeak.lock();
+    if (!geometry) return;
+
+    // Remove geometry
+    m_geometries.erase(
+        std::remove_if(m_geometries.begin(), m_geometries.end(),
+            [geometry](const std::shared_ptr<Geometry2D>& geom) {
+                return geom->m_uniqueId == geometry->m_uniqueId;
+            }),
+        m_geometries.end()
+    );
 }
 
 void MeshManager2D::render(const glm::mat4& projection) {

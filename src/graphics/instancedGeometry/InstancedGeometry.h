@@ -113,6 +113,8 @@ public:
 private:
     static uint64_t s_nextGeometryId;
 
+    // True when the instance is owned by this geometry and its index is live.
+    bool ownsInstance(const Instance* instance) const;
     InstanceData createInstanceData(Instance* instance);
     void setupOpenGL(const std::vector<GeometryVertex>& vertices,
                      const std::vector<uint32_t>& indices);

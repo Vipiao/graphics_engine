@@ -102,13 +102,13 @@ std::weak_ptr<Instance> Geometry::addInstance(
 
 void Geometry::removeInstance(std::weak_ptr<Instance> instanceWeak) {
     auto instance = instanceWeak.lock();
-    if (!instance) return;
-
-    uint32_t index = instance->m_bufferIndex;
-    if (index >= m_instances.size()) {
-        std::cerr << "Geometry: Invalid buffer index in removeInstance" << std::endl;
+    if (!ownsInstance(instance.get())) {
+        std::cerr << "Geometry: Instance not owned by this geometry in removeInstance"
+                  << std::endl;
         return;
     }
+
+    uint32_t index = instance->m_bufferIndex;
 
     // If not the last element, move last element to this position
     if (index != m_instances.size() - 1) {
@@ -132,7 +132,7 @@ void Geometry::removeInstance(std::weak_ptr<Instance> instanceWeak) {
 }
 
 void Geometry::updateInstanceInBuffer(Instance* instance) {
-    if (instance->m_bufferIndex >= m_instanceData.size()) {
+    if (!ownsInstance(instance)) {
         return;
     }
 
@@ -143,6 +143,11 @@ void Geometry::updateInstanceInBuffer(Instance* instance) {
     glBindBuffer(GL_ARRAY_BUFFER, m_instanceVBO);
     glBufferSubData(GL_ARRAY_BUFFER, instance->m_bufferIndex * sizeof(InstanceData),
                     sizeof(InstanceData), &m_instanceData[instance->m_bufferIndex]);
+}
+
+bool Geometry::ownsInstance(const Instance* instance) const {
+    return instance && instance->m_bufferIndex < m_instances.size()
+        && m_instances[instance->m_bufferIndex].get() == instance;
 }
 
 InstanceData Geometry::createInstanceData(Instance* instance) {

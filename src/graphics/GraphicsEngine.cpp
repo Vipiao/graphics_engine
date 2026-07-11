@@ -46,7 +46,7 @@ GraphicsEngine::GraphicsEngine(
     m_rayVolumeHandler = std::make_unique<RayVolumeHandler>(m_ssboManager.get());
 
     // Create 2D mesh manager
-    m_meshManager2D = std::make_unique<MeshManager2D>(1000);
+    m_meshManager2D = std::make_unique<MeshManager2D>();
 
     // Create shadow renderer
     m_shadowRenderer = std::make_unique<ShadowRenderer>();
