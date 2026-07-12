@@ -30,29 +30,25 @@ public:
     // Texture management
     int createTexture(const std::string& texturePath);
     
-    // Geometry management. Transparent geometries are drawn in the Weighted
-    // Blended OIT pass instead of the opaque G-buffer pass.
+    // Geometry management. The render layer selects which of the passes below
+    // draws the geometry.
     std::weak_ptr<Geometry> createGeometry(const std::string& modelPath,
-                                           bool transparent = false);
+                                           RenderLayer layer = RenderLayer::Opaque);
     void releaseGeometry(std::weak_ptr<Geometry> geometry);
-    
-    // Rendering
-    void render(
-        const FrameRenderParams& params,
-        bool renderOpaque = true, bool renderTransparent = true);
 
-    // Geometry-only rendering for deferred pipeline
-    void renderGeometry(
-        const FrameRenderParams& params,
-        bool renderOpaque = true, bool renderTransparent = true);
-    void renderDepth(
-        const FrameRenderParams& params,
-        bool renderOpaque = true, bool renderTransparent = true);
+    // Each pass draws exactly one render layer, using the blend and depth
+    // state configured by the pass owner that bound the framebuffer
+    // (DeferredRenderer / ShadowRenderer).
 
-    // Weighted Blended OIT pass for transparent geometry. The blend and depth
-    // state is owned by DeferredRenderer::beginOITPass; this only binds the OIT
-    // shader and draws the transparent geometries.
+    // G-buffer and shadow-depth passes for opaque geometry.
+    void renderGeometry(const FrameRenderParams& params);
+    void renderDepth(const FrameRenderParams& params);
+
+    // Weighted Blended OIT pass for transparent geometry.
     void renderOIT(const FrameRenderParams& params);
+
+    // Forward pass for overlay geometry, drawn after the OIT composite.
+    void renderOverlay(const FrameRenderParams& params);
 
     // Shader reloading
     std::pair<bool, std::string> reloadShaders();
@@ -66,7 +62,7 @@ private:
     
     // OpenGL resources
     SSBOManager* m_ssboManager;
-    ShaderProgram m_shaderProgram;
+    ShaderProgram m_overlayShaderProgram;
     ShaderProgram m_gbufferShaderProgram;
     ShaderProgram m_depthShaderProgram;
     ShaderProgram m_oitShaderProgram;
@@ -74,10 +70,8 @@ private:
     // Internal helpers
     void createShaderProgram();
 
-    // Helper function for common rendering logic. When oitBlend is set, the
-    // caller owns the blend and depth-write state (OIT pass), so the per-geometry
-    // alpha-blend setup is skipped and depth writes stay disabled.
-    void renderGeometryHelper(
-        const FrameRenderParams& params,
-        bool renderOpaque, bool renderTransparent, bool oitBlend = false);
+    // Common rendering logic: per-frame uniforms, texture binds, and the
+    // instanced draws for every geometry on the given layer, drawn with the
+    // caller's current render state.
+    void renderGeometryHelper(const FrameRenderParams& params, RenderLayer layer);
 };

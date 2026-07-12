@@ -130,9 +130,8 @@ void GraphicsEngine::renderScene() {
     // Render geometry to G-buffer
     m_meshHandler->renderGeometry(frameParams);
 
-    // Render instanced geometry to G-buffer
-    m_instanceHandler->renderGeometry(
-        frameParams, /*renderOpaque=*/true, /*renderTransparent=*/false);
+    // Render opaque instanced geometry to G-buffer
+    m_instanceHandler->renderGeometry(frameParams);
 
     // End geometry pass and do lighting pass
     m_deferredRenderer->endGeometryPassAndRenderLighting(
@@ -164,6 +163,14 @@ void GraphicsEngine::renderScene() {
     m_deferredRenderer->endRayVolumeSubPass();
 
     m_deferredRenderer->compositeOIT();
+
+    // Overlay pass: in-world UI drawn forward over the finished 3D scene, on
+    // top of opaques, transparents and ray volumes alike. Runs before
+    // post-processing so overlays share the scene's Panini distortion and
+    // world-ray hit tests keep matching what is on screen.
+    m_deferredRenderer->beginOverlayPass();
+    m_instanceHandler->renderOverlay(frameParams);
+    m_deferredRenderer->endOverlayPass();
 
     // Post-processing pass: resample the finished scene to the screen
     // (Panini distortion + blue-noise dither).
@@ -200,8 +207,7 @@ void GraphicsEngine::renderShadowPass() {
         m_meshHandler->renderDepth(
             depthParams, /*renderOpaque=*/true, /*renderTransparent=*/false);
 
-        m_instanceHandler->renderDepth(
-            depthParams, /*renderOpaque=*/true, /*renderTransparent=*/false);
+        m_instanceHandler->renderDepth(depthParams);
     }
 }
 
@@ -274,8 +280,8 @@ MeshHandler::Texture GraphicsEngine::createTexture(const std::string& texturePat
 }
 
 std::weak_ptr<Geometry> GraphicsEngine::createInstanceGeometry(const std::string& modelPath,
-                                                               bool transparent) {
-    return m_instanceHandler->createGeometry(modelPath, transparent);
+                                                               RenderLayer layer) {
+    return m_instanceHandler->createGeometry(modelPath, layer);
 }
 
 void GraphicsEngine::releaseInstanceGeometry(std::weak_ptr<Geometry> geometry) {

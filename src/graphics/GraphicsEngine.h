@@ -4,6 +4,9 @@
 #include "GraphicsEngineBase.h"
 // MeshHandler.h is needed for the nested MeshHandler::Texture return type.
 #include "meshHandler/MeshHandler.h"
+// InstancedGeometry.h provides RenderLayer and the Geometry/Instance handle
+// types callers use with the instanced-geometry API below.
+#include "instancedGeometry/InstancedGeometry.h"
 #include <memory>
 #include <string>
 #include <vector>
@@ -15,8 +18,6 @@ class DeferredRenderer;
 class RayVolumeHandler;
 class MeshManager2D;
 class InstanceHandler;
-class Geometry;
-class Instance;
 class SSBOManager;
 class ShadowRenderer;
 
@@ -123,11 +124,12 @@ public:
     MeshManager2D* getMeshManager2D() { return m_meshManager2D.get(); }
 
     // Instanced-geometry resources. Thin forwarders over the internal
-    // InstanceHandler: geometry is created transparent (OIT pass) when requested.
-    // The returned Geometry/Instance handles are the interface for per-instance
-    // updates (addInstance, updateInstanceInBuffer, ...).
-    std::weak_ptr<Geometry> createInstanceGeometry(const std::string& modelPath,
-                                                   bool transparent = false);
+    // InstanceHandler: the render layer selects the pass that draws the
+    // geometry (opaque G-buffer, transparent OIT, or overlay). The returned
+    // Geometry/Instance handles are the interface for per-instance updates
+    // (addInstance, updateInstanceInBuffer, ...).
+    std::weak_ptr<Geometry> createInstanceGeometry(
+        const std::string& modelPath, RenderLayer layer = RenderLayer::Opaque);
     void releaseInstanceGeometry(std::weak_ptr<Geometry> geometry);
     int createInstanceTexture(const std::string& texturePath);
 

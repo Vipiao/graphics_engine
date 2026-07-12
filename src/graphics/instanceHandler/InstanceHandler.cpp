@@ -12,7 +12,7 @@ InstanceHandler::InstanceHandler(SSBOManager* ssboManager)
         throw std::runtime_error("SSBOManager cannot be null");
     }
     
-    // Create shader program (use instance-specific shaders)
+    // Create overlay (forward) shader program
     createShaderProgram();
 
     // Create G-buffer shader program
@@ -36,10 +36,10 @@ InstanceHandler::~InstanceHandler() {
 }
 
 void InstanceHandler::createShaderProgram() {
-    // Use instance-specific vertex shader but reuse fragment shader
-    m_shaderProgram.loadVertexShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/instanceHandler/instance_vertex_shader.vert");
-    m_shaderProgram.loadFragmentShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/shared_shaders/fragment_shader.frag");
-    m_shaderProgram.linkShaders();
+    // Instance vertex shader with the shared forward fragment shader
+    m_overlayShaderProgram.loadVertexShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/instanceHandler/instance_vertex_shader.vert");
+    m_overlayShaderProgram.loadFragmentShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/shared_shaders/fragment_shader.frag");
+    m_overlayShaderProgram.linkShaders();
 }
 
 int InstanceHandler::createTexture(const std::string& texturePath) {
@@ -47,9 +47,9 @@ int InstanceHandler::createTexture(const std::string& texturePath) {
 }
 
 std::weak_ptr<Geometry> InstanceHandler::createGeometry(const std::string& modelPath,
-                                                       bool transparent) {
+                                                       RenderLayer layer) {
     auto geometry = Geometry::loadFromFile(modelPath);
-    geometry->setAlphaBlending(transparent);
+    geometry->setRenderLayer(layer);
     m_geometries.push_back(geometry);
 
     return geometry;
@@ -69,48 +69,40 @@ void InstanceHandler::releaseGeometry(std::weak_ptr<Geometry> geometryWeak) {
     );
 }
 
-void InstanceHandler::render(const FrameRenderParams& params,
-                           bool renderOpaque, bool renderTransparent) {
+void InstanceHandler::renderGeometry(const FrameRenderParams& params) {
     if (m_geometries.empty()) return;
 
-    // Use forward rendering shader program
-    m_shaderProgram.use();
+    // Use G-buffer shader program
+    m_gbufferShaderProgram.use();
 
+    renderGeometryHelper(params, RenderLayer::Opaque);
+}
 
-    // Set light direction (unique to forward rendering)
-    GLint lightDirLoc = glGetUniformLocation(m_shaderProgram.getID(), "u_lightDir");
+void InstanceHandler::renderDepth(const FrameRenderParams& params) {
+    if (m_geometries.empty()) return;
+
+    // Use depth-only shader program
+    m_depthShaderProgram.use();
+
+    renderGeometryHelper(params, RenderLayer::Opaque);
+}
+
+void InstanceHandler::renderOverlay(const FrameRenderParams& params) {
+    if (m_geometries.empty()) return;
+
+    // Use the forward shader (shading matches the transparent/OIT model)
+    m_overlayShaderProgram.use();
+
+    // Set light direction in view space
+    GLint lightDirLoc = glGetUniformLocation(m_overlayShaderProgram.getID(), "u_lightDir");
     if (lightDirLoc != -1) {
-        // Transform light direction to view space
         glm::vec4 lightDirView =
             glm::mat4(params.view) * glm::vec4(glm::vec3(params.lightDir), 0.0f);
         glm::vec3 lightDirFloat(lightDirView.x, lightDirView.y, lightDirView.z);
         glUniform3fv(lightDirLoc, 1, glm::value_ptr(lightDirFloat));
     }
 
-    // Use helper for common rendering logic
-    renderGeometryHelper(params, renderOpaque, renderTransparent);
-}
-
-void InstanceHandler::renderGeometry(const FrameRenderParams& params,
-                                   bool renderOpaque, bool renderTransparent) {
-    if (m_geometries.empty()) return;
-
-    // Use G-buffer shader program
-    m_gbufferShaderProgram.use();
-
-    // Use helper for common rendering logic
-    renderGeometryHelper(params, renderOpaque, renderTransparent);
-}
-
-void InstanceHandler::renderDepth(const FrameRenderParams& params,
-                                bool renderOpaque, bool renderTransparent) {
-    if (m_geometries.empty()) return;
-
-    // Use depth-only shader program
-    m_depthShaderProgram.use();
-
-    // Use helper for common rendering logic
-    renderGeometryHelper(params, renderOpaque, renderTransparent);
+    renderGeometryHelper(params, RenderLayer::Overlay);
 }
 
 void InstanceHandler::renderOIT(const FrameRenderParams& params) {
@@ -128,14 +120,11 @@ void InstanceHandler::renderOIT(const FrameRenderParams& params) {
         glUniform3fv(lightDirLoc, 1, glm::value_ptr(lightDirFloat));
     }
 
-    // Only transparent geometries; blend/depth-write state owned by the caller.
-    renderGeometryHelper(params, /*renderOpaque=*/false, /*renderTransparent=*/true,
-                         /*oitBlend=*/true);
+    renderGeometryHelper(params, RenderLayer::Transparent);
 }
 
 void InstanceHandler::renderGeometryHelper(
-    const FrameRenderParams& params,
-    bool renderOpaque, bool renderTransparent, bool oitBlend) {
+    const FrameRenderParams& params, RenderLayer layer) {
 
     // Get currently active shader program
     GLint currentProgram;
@@ -168,58 +157,21 @@ void InstanceHandler::renderGeometryHelper(
         }
     }
     
-    // Set depth testing and render each geometry with its instances
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
-    
     for (const auto& geometry : m_geometries) {
         if (geometry->m_instanceData.empty()) continue;
-
-        // Filter based on transparency settings
-        bool isTransparent = geometry->m_enableAlphaBlending;
-        if ((isTransparent && !renderTransparent) || (!isTransparent && !renderOpaque)) {
-            continue;
-        }
-
-        // Save current OpenGL state
-        GLfloat savedDepthRange[2];
-        glGetFloatv(GL_DEPTH_RANGE, savedDepthRange);
-        GLboolean blendEnabled = glIsEnabled(GL_BLEND);
-        
-        // Apply geometry-specific depth compression
-        if (geometry->m_depthCompression < 1.0) {
-            glDepthRange(0.0, static_cast<GLdouble>(geometry->m_depthCompression));
-        }
-        
-        // Apply geometry-specific alpha blending. In the OIT pass the caller owns
-        // the blend state (per-target accumulation), so leave it untouched.
-        if (!oitBlend && geometry->m_enableAlphaBlending) {
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        }
+        if (geometry->m_renderLayer != layer) continue;
 
         glBindVertexArray(geometry->m_VAO);
-        
+
         if (geometry->m_hasIndices) {
-            glDrawElementsInstanced(GL_TRIANGLES, geometry->m_indexCount, GL_UNSIGNED_INT, 0, 
+            glDrawElementsInstanced(GL_TRIANGLES, geometry->m_indexCount, GL_UNSIGNED_INT, 0,
                                   static_cast<GLsizei>(geometry->m_instanceData.size()));
         } else {
-            glDrawArraysInstanced(GL_TRIANGLES, 0, geometry->m_vertexCount, 
+            glDrawArraysInstanced(GL_TRIANGLES, 0, geometry->m_vertexCount,
                                 static_cast<GLsizei>(geometry->m_instanceData.size()));
         }
-
-        // Restore OpenGL state
-        glDepthRange(savedDepthRange[0], savedDepthRange[1]);
-
-        if (!oitBlend) {
-            if (geometry->m_enableAlphaBlending && !blendEnabled) {
-                glDisable(GL_BLEND);
-            } else if (!geometry->m_enableAlphaBlending && blendEnabled) {
-                glEnable(GL_BLEND);
-            }
-        }
     }
-    
+
     glBindVertexArray(0);
 }
 
@@ -227,7 +179,7 @@ std::pair<bool, std::string> InstanceHandler::reloadShaders() {
    std::string allErrors;
    bool allSuccess = true;
    
-   auto [success1, error1] = m_shaderProgram.reloadShaders();
+   auto [success1, error1] = m_overlayShaderProgram.reloadShaders();
    auto [success2, error2] = m_gbufferShaderProgram.reloadShaders();
    auto [success3, error3] = m_depthShaderProgram.reloadShaders();
    auto [success4, error4] = m_oitShaderProgram.reloadShaders();

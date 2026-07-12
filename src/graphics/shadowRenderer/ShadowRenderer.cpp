@@ -159,9 +159,10 @@ void ShadowRenderer::beginShadowPass(const glm::dvec3& lightDir, const glm::dvec
     // Clear depth buffer
     glClear(GL_DEPTH_BUFFER_BIT);
     
-    // Enable depth testing
+    // Depth state for the depth draws of this pass, LEQUAL consistent with
+    // the camera-view passes
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
+    glDepthFunc(GL_LEQUAL);
     
     // Optional: Enable front face culling to reduce peter panning
     // (render back faces to shadow map to push shadows away from surfaces)

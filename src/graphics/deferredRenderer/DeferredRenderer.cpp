@@ -290,6 +290,10 @@ void DeferredRenderer::beginGeometryPass() {
     glBindFramebuffer(GL_FRAMEBUFFER, m_gbufferFBO);
     glViewport(0, 0, m_gbufferWidth, m_gbufferHeight);
 
+    // Depth state for the geometry draws of this pass
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+
     // Clear each buffer with appropriate values
     glClearBufferfv(GL_COLOR, 0, glm::value_ptr(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f))); // Albedo: black
     glClearBufferfv(GL_COLOR, 1, glm::value_ptr(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f))); // Normal: zero
@@ -523,6 +527,31 @@ void DeferredRenderer::compositeOIT() {
     // clear (which needs depth writes enabled).
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+}
+
+void DeferredRenderer::beginOverlayPass() {
+    if (!m_gbufferInitialized) {
+        return;
+    }
+
+    // Color-only scene target: with no depth test there is no need for a depth
+    // attachment. Overlay fragments blend directly over the composited scene.
+    glBindFramebuffer(GL_FRAMEBUFFER, m_sceneLightingFBO);
+    glViewport(0, 0, m_gbufferWidth, m_gbufferHeight);
+
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+}
+
+void DeferredRenderer::endOverlayPass() {
+    if (!m_gbufferInitialized) {
+        return;
+    }
+
+    // Restore the defaults the post-processing pass and the next frame expect.
+    glDisable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);
 }
 

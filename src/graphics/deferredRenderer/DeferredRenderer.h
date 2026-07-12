@@ -57,6 +57,14 @@ public:
     void beginRayVolumeSubPass();
     void endRayVolumeSubPass();
 
+    // Overlay pass: forward geometry drawn over the finished 3D scene (after
+    // compositeOIT, before post-processing). Binds the color-only scene target
+    // with ordinary alpha blending and no depth test — overlays draw on top of
+    // everything 3D, layered among themselves by draw order. end restores the
+    // default blend/depth state the later passes expect.
+    void beginOverlayPass();
+    void endOverlayPass();
+
     // Exposed for the ray-volume sub-pass, whose shader samples scene depth and
     // reconstructs view-space position per pixel. The scene color holds the lit
     // opaque result at sub-pass time (transparents are not composited yet), so a

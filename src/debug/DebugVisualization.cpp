@@ -60,17 +60,13 @@ void DebugVisualization::loadSharedResources() {
     if (m_resourcesLoaded) return;
     
     try {
-        // Load shared sphere geometry
-        m_sphereGeometry = m_instanceHandler->createGeometry("../media/blender/02_sphere.obj");
-        
+        // Load shared sphere geometry; overlay so debug markers draw on top of
+        // the scene
+        m_sphereGeometry = m_instanceHandler->createGeometry(
+            "../media/blender/02_sphere.obj", RenderLayer::Overlay);
+
         // Load shared texture
         m_textureIndex = m_instanceHandler->createTexture("../media/debug_red_transparent.png");
-        
-        // Configure geometry for overlay rendering with transparency
-        if (auto geometry = m_sphereGeometry.lock()) {
-            geometry->setDepthCompression(0.1);  // Compress depth range to render in front
-            geometry->setAlphaBlending(true);     // Enable transparency
-        }
 
         m_resourcesLoaded = true;
         std::cout << "Debug visualization shared resources loaded successfully" << std::endl;

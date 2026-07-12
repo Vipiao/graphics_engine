@@ -13,6 +13,21 @@
 // (Dekker) space. Owns no shaders and no render state; a renderer (e.g.
 // InstanceHandler) supplies those and issues the draw calls.
 
+// Which render pass draws a geometry.
+//
+// Opaque      G-buffer pass; lit deferred, writes depth, casts shadows.
+// Transparent Weighted Blended OIT pass; order-independent blending against
+//             the scene and other transparents, depth-tested against opaques.
+// Overlay     Forward pass after the OIT composite; ordinary alpha blending,
+//             no depth test, so it draws on top of everything 3D. Layering
+//             within the pass is draw order: geometry creation order, and
+//             instance order within a geometry. Intended for in-world UI.
+enum class RenderLayer {
+    Opaque,
+    Transparent,
+    Overlay,
+};
+
 /**
  * @brief Instance data for GPU buffer (local transforms only)
  */
@@ -76,8 +91,7 @@ public:
     bool m_hasIndices;
 
     // Rendering options
-    double m_depthCompression = 1.0;  // 1.0 = normal, < 1.0 = compressed depth range
-    bool m_enableAlphaBlending = false;
+    RenderLayer m_renderLayer = RenderLayer::Opaque;
 
     // Instance management (kept in same order)
     GLuint m_instanceVBO;
@@ -98,10 +112,8 @@ public:
     static std::shared_ptr<Geometry> loadFromFile(const std::string& modelPath);
 
     // Instance management methods
-    void setDepthCompression(double compression) { m_depthCompression = compression; }
-    void setAlphaBlending(bool enable) { m_enableAlphaBlending = enable; }
-    double getDepthCompression() const { return m_depthCompression; }
-    bool getAlphaBlending() const { return m_enableAlphaBlending; }
+    void setRenderLayer(RenderLayer layer) { m_renderLayer = layer; }
+    RenderLayer getRenderLayer() const { return m_renderLayer; }
     std::weak_ptr<Instance> addInstance(
         int ssboIndex, int colorTextureUnit = -1, int normalTextureUnit = -1,
         int materialTextureUnit = -1,

@@ -652,9 +652,7 @@ void MeshHandler::renderGeometryHelper(const FrameRenderParams& params) {
           glUniform1i(textureLoc, texture->m_textureUnit);
    }
    
-   // Set depth testing and render geometry
-   glEnable(GL_DEPTH_TEST);
-   glDepthFunc(GL_LEQUAL);
+   // Render geometry with the pass owner's blend and depth state
    glBindVertexArray(m_vao);
    glDrawArrays(GL_TRIANGLES, 0, m_totalTriangles * 3);
    glBindVertexArray(0);
