@@ -24,6 +24,8 @@ uniform sampler2D u_sceneDepth;      // G-buffer depth (opaque scene)
 uniform sampler2D u_opaqueColor;     // lit opaque color behind this pixel
 uniform vec2 u_screenSize;
 uniform mat4 u_inverseProjection;
+uniform uint u_time;                 // fixed-step tick index of the current frame
+uniform float u_timeRemainder;       // fraction of a tick elapsed at this frame
 
 // Result of the injected shading body.
 //   color       : straight (non-premultiplied) RGB
@@ -45,6 +47,24 @@ float sceneViewDepth() {
    vec4 ndc = vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
    vec4 viewH = u_inverseProjection * ndc;
    return -(viewH.z / viewH.w);
+}
+
+// Animation clocks for the body, both measured in the application's fixed
+// simulation ticks:
+//   physicsTime : advances one whole tick at a time, so it carries no render
+//                 interpolation and reads the same on every peer of a session
+//   frameTime   : physicsTime plus the interpolation within the current tick,
+//                 so it advances smoothly with the frame rate
+// Both wrap every k_timeWrapTicks, which keeps float sub-tick resolution however
+// long a session runs; animation periodic over that window hides the wrap.
+const uint k_timeWrapTicks = 1048576u;   // 2^20 ticks
+
+float physicsTime() {
+   return float(u_time & (k_timeWrapTicks - 1u));
+}
+
+float frameTime() {
+   return physicsTime() + u_timeRemainder;
 }
 
 // The injected shading body defines:
