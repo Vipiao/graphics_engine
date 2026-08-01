@@ -13,6 +13,7 @@
 #include <filesystem>
 
 GraphicsEngine::GraphicsEngine(
+    TimeHandler* timeHandler,
     int screenWidth,
     int screenHeight,
     const std::string& windowTitle,
@@ -21,7 +22,7 @@ GraphicsEngine::GraphicsEngine(
     GraphicsEngineBase::Mode mode)
 {
     // Create GraphicsEngineBase
-    m_graphicsEngineBase = std::make_shared<GraphicsEngineBase>(mode);
+    m_graphicsEngineBase = std::make_shared<GraphicsEngineBase>(timeHandler, mode);
     
     // Configure window
     m_graphicsEngineBase->m_screen_width = screenWidth;
@@ -82,6 +83,10 @@ GraphicsEngine::~GraphicsEngine() {
 
 void GraphicsEngine::beginFrame() {
     m_graphicsEngineBase->clearScreen();
+    // After clearScreen, so the vsync throttle is behind us and the sample
+    // lands at the frame's true start rather than inside the previous frame's
+    // presentation wait.
+    m_graphicsEngineBase->updateFrameTiming();
     m_graphicsEngineBase->updateInput();
 }
 

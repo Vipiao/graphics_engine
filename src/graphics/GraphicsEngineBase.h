@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <functional>
 
@@ -15,10 +16,16 @@
 #include "MouseHandler.h"
 #include "KeyboardHandler.h"
 
+class TimeHandler;
+
 class GraphicsEngineBase {
 public:
    enum class Mode { NONE, RECORD, PLAY };
-   GraphicsEngineBase(Mode mode = Mode::NONE, const std::filesystem::path& filepath = "recording_mouse_keyboard");
+   // The TimeHandler is the engine's only clock. Frame timing is recorded and
+   // replayed through it, exactly as mouse and keyboard state already are, so a
+   // replayed session reproduces the frame pacing the recorded one ran at.
+   GraphicsEngineBase(TimeHandler* timeHandler, Mode mode = Mode::NONE,
+      const std::filesystem::path& filepath = "recording_mouse_keyboard");
    ~GraphicsEngineBase();
    GraphicsEngineBase(const GraphicsEngineBase&) = delete;
    GraphicsEngineBase& operator= (const GraphicsEngineBase&) = delete;
@@ -29,6 +36,10 @@ public:
    // Frame control methods
    bool shouldClose() const { return glfwWindowShouldClose(m_window); }
    void clearScreen();
+   // Opens a frame: samples its start and derives the rate the previous one
+   // achieved. Call once per frame, after clearScreen has cleared the vsync
+   // throttle, so the sample lands at the frame's true start.
+   void updateFrameTiming();
    void updateInput();
    void calculateCameraVelocity();
    glm::dmat4 getViewMatrix() const;
@@ -54,7 +65,18 @@ public:
    unsigned int m_screen_height{ 600 };
    glm::dvec3 m_camPos{ 0,0,0 };
    glm::dvec3 m_camVel{};
-   int m_frameRate{ 0 };
+   // The monitor mode's refresh rate. This is what the display *can* do, not
+   // what this window achieves: a compositor throttles a windowed surface well
+   // below it. Use it only to pace against the display; anything converting
+   // between seconds and frames wants m_measuredFrameRate.
+   int m_monitorRefreshRate{ 0 };
+   // Frames per second actually achieved, measured in updateFrameTiming.
+   // Instantaneous, never smoothed, so a value advanced by 1/m_measuredFrameRate
+   // each frame tracks elapsed time exactly.
+   double m_measuredFrameRate{ 0.0 };
+   // Start of the current frame; the single frame-start timestamp, so
+   // everything pacing off the frame agrees on when it began.
+   std::chrono::time_point<std::chrono::high_resolution_clock> m_frameStartTime{};
    //glm::dquat m_camOri{ glm::sqrt(2.) / 2., -glm::sqrt(2.) / 2.,0,0 }; // 90% rotation around negative x axis.
    glm::dquat m_camOri{ 1,0,0,0 }; // Unit orientation.
    uint64_t m_frameNum{ 0 };
@@ -78,8 +100,16 @@ public:
 protected:
    static void framebufferSizeCallback(GLFWwindow* window, int width, int height);
    static void windowPosCallback(GLFWwindow* window, int xpos, int ypos);
-   int getFrameRate();
+   int queryMonitorRefreshRate();
    GLFWmonitor* getCurrentMonitor();
+
+   // Bounds on the measured frame delta. A window the compositor has stopped
+   // sending frame callbacks to (occluded, another workspace) resumes with an
+   // arbitrarily long gap, which must not become an arbitrarily long time step.
+   static constexpr double k_minFrameDelta{ 0.001 };  // 1000 fps
+   static constexpr double k_maxFrameDelta{ 0.1 };    // 10 fps
+
+   TimeHandler* m_timeHandler{ nullptr };
 
    bool m_renderTriangleMode{ false };
    bool m_windowOnTop{ false };

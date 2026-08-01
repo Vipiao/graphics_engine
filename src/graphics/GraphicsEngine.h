@@ -21,9 +21,12 @@ class InstanceHandler;
 class SSBOManager;
 class ShadowRenderer;
 
+class TimeHandler;
+
 class GraphicsEngine {
 public:
     GraphicsEngine(
+        TimeHandler* timeHandler,
         int screenWidth = 800,
         int screenHeight = 600,
         const std::string& windowTitle = "Graphics Engine",
@@ -42,7 +45,18 @@ public:
     unsigned int getScreenHeight() { return getGraphicsEngineBase()->m_screen_height; }
     glm::dvec3& getCamPos() { return getGraphicsEngineBase()->m_camPos; }
     glm::dvec3& getCamVel() { return getGraphicsEngineBase()->m_camVel; }
-    int getFrameRate() { return getGraphicsEngineBase()->m_frameRate; }
+    // Frames per second actually achieved. This is the rate to convert with:
+    // a windowed surface is routinely throttled below the monitor's mode, and
+    // a nominal rate makes every seconds-to-frames conversion run at the ratio
+    // between the two. Measured per frame in beginFrame.
+    double getFrameRate() { return getGraphicsEngineBase()->m_measuredFrameRate; }
+    // Start of the current frame, sampled once in beginFrame. Anything pacing
+    // off the frame reads it here rather than sampling the clock again.
+    std::chrono::time_point<std::chrono::high_resolution_clock> getFrameStartTime() {
+        return getGraphicsEngineBase()->m_frameStartTime;
+    }
+    // The monitor mode's refresh rate; for pacing against the display only.
+    int getMonitorRefreshRate() { return getGraphicsEngineBase()->m_monitorRefreshRate; }
     glm::dquat& getCamOri() { return getGraphicsEngineBase()->m_camOri; }
     uint64_t getFrameNum() { return getGraphicsEngineBase()->m_frameNum; }
     double& getFieldOfView() { return getGraphicsEngineBase()->m_fieldOfView; }

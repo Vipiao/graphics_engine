@@ -1,4 +1,6 @@
 #include "GraphicsEngineBase.h"
+#include "utils/TimeHandler.h"
+#include <cassert>
 #include "math/PaniniProjection.h"
 
 #include <cstdlib>
@@ -30,10 +32,10 @@ void GraphicsEngineBase::framebufferSizeCallback(GLFWwindow* window, int width, 
    glViewport(0, 0, width, height);
    graphicsEngine->m_screen_width = width;
    graphicsEngine->m_screen_height = height;
-   graphicsEngine->m_frameRate = graphicsEngine->getFrameRate();
-   if (graphicsEngine->m_frameRate == 0) {
+   graphicsEngine->m_monitorRefreshRate = graphicsEngine->queryMonitorRefreshRate();
+   if (graphicsEngine->m_monitorRefreshRate == 0) {
       std::cout << "Warning: Failed to get framerate from monitor. Guessing it is 60 fps." << std::endl;
-      graphicsEngine->m_frameRate = 60;
+      graphicsEngine->m_monitorRefreshRate = 60;
    }
    for (auto& callback : graphicsEngine->m_framebufferCallbacks) {
       callback(width, height);
@@ -43,17 +45,20 @@ void GraphicsEngineBase::framebufferSizeCallback(GLFWwindow* window, int width, 
 void GraphicsEngineBase::windowPosCallback(GLFWwindow* window, int xpos, int ypos) {
    GraphicsEngineBase* graphicsEngine{ static_cast<GraphicsEngineBase*>(glfwGetWindowUserPointer(window)) };
    glfwMakeContextCurrent(graphicsEngine->m_window);
-   graphicsEngine->m_frameRate = graphicsEngine->getFrameRate();
-   if (graphicsEngine->m_frameRate == 0) {
+   graphicsEngine->m_monitorRefreshRate = graphicsEngine->queryMonitorRefreshRate();
+   if (graphicsEngine->m_monitorRefreshRate == 0) {
       std::cout << "Warning: Failed to get framerate from monitor. Guessing it is 60 fps." << std::endl;
-      graphicsEngine->m_frameRate = 60;
+      graphicsEngine->m_monitorRefreshRate = 60;
    }
    for (auto& callback : graphicsEngine->m_windowPosCallbacks) {
       callback(xpos, ypos);
    }
 }
 
-GraphicsEngineBase::GraphicsEngineBase(Mode mode, const std::filesystem::path& filepath) {
+GraphicsEngineBase::GraphicsEngineBase(TimeHandler* timeHandler, Mode mode,
+   const std::filesystem::path& filepath)
+   : m_timeHandler{ timeHandler } {
+   assert(m_timeHandler != nullptr);
    // Force discrete GPU on Linux systems (works for NVIDIA, AMD, Intel Arc)
    #ifdef __linux__
    // Try to use gpu instead of integrated gpu. 0 means do not overwrite user settings.
@@ -153,11 +158,13 @@ GraphicsEngineBase::GraphicsEngineBase(Mode mode, const std::filesystem::path& f
    glfwMaximizeWindow(m_window);
 #endif //FULLSCREEN
 
-   m_frameRate = getFrameRate();
-   if (m_frameRate == 0) {
+   m_monitorRefreshRate = queryMonitorRefreshRate();
+   if (m_monitorRefreshRate == 0) {
       std::cout << "Warning: Failed to get framerate from monitor. Guessing it is 60 fps." << std::endl;
-      m_frameRate = 60;
+      m_monitorRefreshRate = 60;
    }
+   // Seeded from the mode until updateFrameTiming measures a real frame.
+   m_measuredFrameRate = static_cast<double>(m_monitorRefreshRate);
 }
 
 GraphicsEngineBase::~GraphicsEngineBase() {
@@ -189,6 +196,23 @@ void GraphicsEngineBase::setWindowPos(int xPos, int yPos) {
 void GraphicsEngineBase::setSwapInterval(int swapInterval) {
    m_swapInterval = swapInterval;
    glfwSwapInterval(swapInterval);
+}
+
+void GraphicsEngineBase::updateFrameTiming() {
+   std::chrono::time_point<std::chrono::high_resolution_clock> previousFrameStart{
+      m_frameStartTime };
+   m_frameStartTime = m_timeHandler->now();
+
+   // The first frame has no predecessor to measure against; the mode's rate is
+   // the only estimate available until the second frame supplies a real one.
+   if (m_frameNum == 0) {
+      m_measuredFrameRate = static_cast<double>(m_monitorRefreshRate);
+      return;
+   }
+   double frameDelta{ std::clamp(
+      std::chrono::duration<double>(m_frameStartTime - previousFrameStart).count(),
+      k_minFrameDelta, k_maxFrameDelta) };
+   m_measuredFrameRate = 1.0 / frameDelta;
 }
 
 void GraphicsEngineBase::clearScreen() {
@@ -290,7 +314,7 @@ bool GraphicsEngineBase::getTriangleRenderMode() {
    return m_renderTriangleMode;
 }
 
-int GraphicsEngineBase::getFrameRate() {
+int GraphicsEngineBase::queryMonitorRefreshRate() {
    if (!m_window) {
       return 0; // Return 0 if there is no window.
    }
