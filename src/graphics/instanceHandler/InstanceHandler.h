@@ -34,6 +34,8 @@ public:
     // draws the geometry.
     std::weak_ptr<Geometry> createGeometry(const std::string& modelPath,
                                            RenderLayer layer = RenderLayer::Opaque);
+    std::weak_ptr<Geometry> createGeometry(const std::vector<GeometryVertex>& vertices,
+                                           RenderLayer layer = RenderLayer::Opaque);
     void releaseGeometry(std::weak_ptr<Geometry> geometry);
 
     // Each pass draws exactly one render layer, using the blend and depth

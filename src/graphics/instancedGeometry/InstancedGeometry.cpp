@@ -60,6 +60,24 @@ std::shared_ptr<Geometry> Geometry::loadFromFile(const std::string& modelPath) {
     return geometry;
 }
 
+std::shared_ptr<Geometry> Geometry::createFromVertices(
+    const std::vector<GeometryVertex>& vertices) {
+    if (vertices.empty() || vertices.size() % 3 != 0) {
+        throw std::runtime_error("Geometry vertices do not form whole triangles");
+    }
+
+    auto geometry = std::make_shared<Geometry>();
+
+    std::vector<uint32_t> indices;
+    indices.reserve(vertices.size());
+    for (size_t ii = 0; ii < vertices.size(); ++ii) {
+        indices.push_back(static_cast<uint32_t>(ii));
+    }
+
+    geometry->setupOpenGL(vertices, indices);
+    return geometry;
+}
+
 std::weak_ptr<Instance> Geometry::addInstance(
     int ssboIndex, int colorTextureUnit, int normalTextureUnit,
     int materialTextureUnit, const glm::dvec4& color, int maskTextureUnit) {

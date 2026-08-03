@@ -289,6 +289,11 @@ std::weak_ptr<Geometry> GraphicsEngine::createInstanceGeometry(const std::string
     return m_instanceHandler->createGeometry(modelPath, layer);
 }
 
+std::weak_ptr<Geometry> GraphicsEngine::createInstanceGeometry(
+    const std::vector<GeometryVertex>& vertices, RenderLayer layer) {
+    return m_instanceHandler->createGeometry(vertices, layer);
+}
+
 void GraphicsEngine::releaseInstanceGeometry(std::weak_ptr<Geometry> geometry) {
     m_instanceHandler->releaseGeometry(geometry);
 }

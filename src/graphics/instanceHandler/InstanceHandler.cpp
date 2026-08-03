@@ -55,6 +55,15 @@ std::weak_ptr<Geometry> InstanceHandler::createGeometry(const std::string& model
     return geometry;
 }
 
+std::weak_ptr<Geometry> InstanceHandler::createGeometry(
+    const std::vector<GeometryVertex>& vertices, RenderLayer layer) {
+    auto geometry = Geometry::createFromVertices(vertices);
+    geometry->setRenderLayer(layer);
+    m_geometries.push_back(geometry);
+
+    return geometry;
+}
+
 void InstanceHandler::releaseGeometry(std::weak_ptr<Geometry> geometryWeak) {
     auto geometry = geometryWeak.lock();
     if (!geometry) return;

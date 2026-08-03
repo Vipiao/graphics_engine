@@ -111,6 +111,11 @@ public:
     // instance buffers with the standard attribute layout.
     static std::shared_ptr<Geometry> loadFromFile(const std::string& modelPath);
 
+    // Same, from vertices already in memory: a plain triangle list, three vertices
+    // per triangle. For meshes generated at runtime rather than authored in a file.
+    static std::shared_ptr<Geometry> createFromVertices(
+        const std::vector<GeometryVertex>& vertices);
+
     // Instance management methods
     void setRenderLayer(RenderLayer layer) { m_renderLayer = layer; }
     RenderLayer getRenderLayer() const { return m_renderLayer; }

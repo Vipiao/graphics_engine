@@ -144,6 +144,10 @@ public:
     // (addInstance, updateInstanceInBuffer, ...).
     std::weak_ptr<Geometry> createInstanceGeometry(
         const std::string& modelPath, RenderLayer layer = RenderLayer::Opaque);
+    // For geometry generated at runtime: a triangle list in the standard vertex
+    // layout, uploaded once and instanced like any loaded model.
+    std::weak_ptr<Geometry> createInstanceGeometry(
+        const std::vector<GeometryVertex>& vertices, RenderLayer layer = RenderLayer::Opaque);
     void releaseInstanceGeometry(std::weak_ptr<Geometry> geometry);
     int createInstanceTexture(const std::string& texturePath);
 
