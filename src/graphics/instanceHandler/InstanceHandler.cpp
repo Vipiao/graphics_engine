@@ -4,6 +4,7 @@
 #include "../SSBOManager.h"
 #include "../InstanceFrameUniforms.h"
 #include <algorithm>
+#include <stdexcept>
 
 InstanceHandler::InstanceHandler(SSBOManager* ssboManager)
     : m_ssboManager(ssboManager) {
