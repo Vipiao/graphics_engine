@@ -11,26 +11,22 @@
 // single place it is decided -- a copy in this file could drift out of step with
 // the index buffer and silently fold the patch onto itself.
 
-// Cube face bases, in units where the body spans [-1, 1] on every axis. A face
-// is origin + u * uAxis + v * vAxis for (u, v) in [0, 1]^2. Every basis is wound
-// so uAxis cross vAxis points out of the body, which makes a triangle wound
-// counter-clockwise in (u, v) counter-clockwise seen from outside.
-const vec3 k_faceOrigin[6] = vec3[6](
-   vec3( 1.0, -1.0, -1.0),  // +X
-   vec3(-1.0, -1.0, -1.0),  // -X
-   vec3(-1.0,  1.0, -1.0),  // +Y
-   vec3(-1.0, -1.0, -1.0),  // -Y
-   vec3(-1.0, -1.0,  1.0),  // +Z
-   vec3(-1.0, -1.0, -1.0)   // -Z
-);
-const vec3 k_faceUAxis[6] = vec3[6](
-   vec3(0.0, 2.0, 0.0), vec3(0.0, 0.0, 2.0), vec3(0.0, 0.0, 2.0),
-   vec3(2.0, 0.0, 0.0), vec3(2.0, 0.0, 0.0), vec3(0.0, 2.0, 0.0)
-);
-const vec3 k_faceVAxis[6] = vec3[6](
-   vec3(0.0, 0.0, 2.0), vec3(0.0, 2.0, 0.0), vec3(2.0, 0.0, 0.0),
-   vec3(0.0, 0.0, 2.0), vec3(0.0, 2.0, 0.0), vec3(2.0, 0.0, 0.0)
-);
+// Everything true of a whole body, as CdlodHandler uploads it. Mirrors
+// CdlodHandler::CdlodInstanceData, which the static_assert there pins to this
+// layout. It is read rather than passed as uniforms so that every instance
+// sharing a surface can be drawn in one instanced call.
+struct CdlodInstanceData {
+   vec4 baseColor;
+   vec4 cameraBodyPosition;  // xyz: the camera in this body's own frame
+   float halfExtent;
+   float lodRangeFactor;
+   int ssboIndex;            // the body's world transform, in the shared SSBO
+   int padding;
+};
+
+layout(std430, binding = 1) readonly buffer CdlodInstanceBuffer {
+   CdlodInstanceData cdlodInstanceBuffer[];
+};
 
 // Where in a leaf's distance band the morph begins, as a fraction of the band.
 // Later keeps full detail for longer but ramps more steeply; earlier is gentler
@@ -43,14 +39,11 @@ const vec3 k_faceVAxis[6] = vec3[6](
 // begun when the children go, and the surface steps.
 const float k_morphStartFraction = 0.5;
 
-// The patch and body constants both vertex stages need. They live here rather
-// than in each leaf shader because the depth stage has to morph a vertex to the
-// exact same place the G-buffer stage does -- were these declared separately,
-// the shadow map could disagree with the surface casting it.
+// The patch grid both vertex stages walk. It lives here rather than in each leaf
+// shader because the depth stage has to morph a vertex to the exact same place
+// the G-buffer stage does -- were it declared separately, the shadow map could
+// disagree with the surface casting it.
 uniform int u_patchVertices;
-uniform float u_halfExtent;
-uniform float u_lodRangeFactor;
-uniform vec3 u_cameraBodyPosition;
 
 // Grid coordinate of this vertex within the patch, in whole vertices.
 ivec2 cdlodPatchVertexGrid(int vertexId) {
@@ -68,8 +61,10 @@ vec2 cdlodPatchGridUv(ivec2 grid, float morphK) {
    return (vec2(grid) - isOdd * morphK) / float(u_patchVertices - 1);
 }
 
-// The body's base shape: a face-space coordinate projected onto the sphere, in
-// the body's own frame and in metres.
+// The body's base shape: a patch coordinate placed in the node's own frame and
+// projected onto the sphere, in the body's own frame and in metres. The frame
+// arrives with the node record, so nothing here knows what solid the patch came
+// off -- only that the result is projected onto a sphere.
 //
 // CdlodTree::projectedPoint is the CPU twin of this and has to agree with it,
 // or selection measures distances to a surface that is not where it is drawn.
@@ -77,16 +72,10 @@ vec2 cdlodPatchGridUv(ivec2 grid, float morphK) {
 // here, on the smooth sphere, never on the displaced surface. That is what lets
 // the surface body displace by any amount without disturbing the distance
 // bounds those decisions rest on.
-vec3 cdlodSpherePoint(vec2 faceUv, int faceIndex) {
-   vec3 cubePoint = k_faceOrigin[faceIndex]
-                  + k_faceUAxis[faceIndex] * faceUv.x
-                  + k_faceVAxis[faceIndex] * faceUv.y;
-   return normalize(cubePoint) * u_halfExtent;
-}
-
-// Face-space coordinate of a patch vertex.
-vec2 cdlodPatchFaceUv(vec2 patchUv, vec2 nodeOffset, float nodeSize) {
-   return nodeOffset + patchUv * nodeSize;
+vec3 cdlodPatchPoint(vec2 patchUv, vec3 centre, vec3 uAxis, vec3 vAxis, float halfExtent) {
+   vec3 basePoint = centre + (2.0 * patchUv.x - 1.0) * uAxis
+                           + (2.0 * patchUv.y - 1.0) * vAxis;
+   return normalize(basePoint) * halfExtent;
 }
 
 // The injected surface body defines a radial height field over the sphere:
@@ -157,34 +146,37 @@ vec3 cdlodDisplacedNormal(vec3 spherePosition) {
 // coarser neighbour on one edge must be fully morphed there while still showing
 // detail on the edge facing the camera, and one value per patch would instead
 // make same-level neighbours disagree along their shared edge.
-float cdlodMorphWeight(vec3 restPosition, float nodeSize, int nodeLevel) {
-   if (nodeLevel == 0) return 0.0;  // a root has no parent to merge into
+float cdlodMorphWeight(vec3 restPosition, float patchEdge, int patchLevel,
+                       CdlodInstanceData instance) {
+   if (patchLevel == 0) return 0.0;  // a root has no parent to merge into
 
-   float ownRange = u_lodRangeFactor * 2.0 * u_halfExtent * nodeSize;
+   float ownRange = instance.lodRangeFactor * patchEdge;
    float morphEnd = 2.0 * ownRange;
    float morphStart = mix(ownRange, morphEnd, k_morphStartFraction);
-   return clamp((distance(restPosition, u_cameraBodyPosition) - morphStart) /
+   return clamp((distance(restPosition, instance.cameraBodyPosition.xyz) - morphStart) /
                 (morphEnd - morphStart), 0.0, 1.0);
 }
 
 // The patch coordinate this vertex actually renders at. Both vertex stages go
 // through here, so the depth pass cannot morph differently from the G-buffer one.
-vec2 cdlodMorphedPatchUv(int vertexId, vec2 nodeOffset, float nodeSize,
-                         int faceIndex, int nodeLevel) {
+vec2 cdlodMorphedPatchUv(int vertexId, vec3 centre, vec3 uAxis, vec3 vAxis,
+                         int patchLevel, CdlodInstanceData instance) {
    ivec2 grid = cdlodPatchVertexGrid(vertexId);
    // Measured unmorphed: the morph follows from this distance, so the distance
    // cannot be allowed to follow from the morph.
-   vec3 restPosition = cdlodSpherePoint(
-      cdlodPatchFaceUv(cdlodPatchGridUv(grid, 0.0), nodeOffset, nodeSize), faceIndex);
-   return cdlodPatchGridUv(grid, cdlodMorphWeight(restPosition, nodeSize, nodeLevel));
+   vec3 restPosition = cdlodPatchPoint(cdlodPatchGridUv(grid, 0.0), centre, uAxis, vAxis,
+                                       instance.halfExtent);
+   float patchEdge = 2.0 * length(uAxis);
+   return cdlodPatchGridUv(grid,
+                           cdlodMorphWeight(restPosition, patchEdge, patchLevel, instance));
 }
 
 // Distinct hue per quadtree level, for the debug view. Reading the tree's state
 // off the screen is the whole point, so the steps are far apart rather than a ramp.
-vec3 cdlodLevelColor(int nodeLevel) {
+vec3 cdlodLevelColor(int patchLevel) {
    const vec3 k_levelPalette[6] = vec3[6](
       vec3(0.90, 0.30, 0.25), vec3(0.95, 0.70, 0.20), vec3(0.45, 0.85, 0.35),
       vec3(0.30, 0.75, 0.90), vec3(0.45, 0.45, 0.95), vec3(0.90, 0.45, 0.85)
    );
-   return k_levelPalette[nodeLevel % 6];
+   return k_levelPalette[patchLevel % 6];
 }

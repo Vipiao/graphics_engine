@@ -1,11 +1,10 @@
 // CdlodHandler.cpp
 #include "CdlodHandler.h"
-#include "CdlodBody.h"
 #include "CdlodPatchGeometry.h"
 #include "../SSBOManager.h"
 #include "../InstanceFrameUniforms.h"
 #include <algorithm>
-#include <cstdint>
+#include <cstddef>
 #include <stdexcept>
 #include <glm/gtc/quaternion.hpp>
 
@@ -22,6 +21,14 @@ constexpr const char* s_depthFragmentPath =
 constexpr const char* s_defaultSurfacePath =
     ENGINE_ASSET_DIR "/src/graphics/cdlod/cdlod_default_surface.glsl";
 constexpr const char* s_surfaceMarker = "__CDLOD_SURFACE_BODY__";
+
+void spliceSurfaceBody(std::string& source, const std::string& body) {
+    const size_t markerPos{source.find(s_surfaceMarker)};
+    if (markerPos == std::string::npos) {
+        throw std::runtime_error("CDLOD stage is missing the surface marker");
+    }
+    source.replace(markerPos, std::char_traits<char>::length(s_surfaceMarker), body);
+}
 
 // CPU twin of the vertex-stage transform in shared_shaders/mesh_transform.glsl,
 // run backwards: it rebuilds the interpolated pose the body will be drawn at
@@ -51,7 +58,84 @@ glm::dvec3 cameraInBodySpace(const MeshTransform& transform,
     return (rotated + transform.centerOfRotation) / transform.scale;
 }
 
+CdlodInstanceData makeInstanceData(const CdlodInstance& instance) {
+    return CdlodInstanceData{glm::vec4{instance.m_config.m_baseColor},
+                             glm::vec4{glm::vec3{instance.m_cameraBodyPosition}, 0.0f},
+                             static_cast<float>(instance.m_config.m_halfExtent),
+                             static_cast<float>(instance.m_config.m_lodRangeFactor),
+                             instance.m_ssboIndex,
+                             0};
+}
+
+// Rewrites a whole buffer, growing its storage geometrically. Everything CDLOD
+// uploads is rebuilt from scratch every frame, so nothing is ever patched. The
+// reallocation doubles as orphaning: the previous frame's draw may still be
+// reading the old storage, and discarding it lets the driver hand back fresh
+// memory instead of waiting for that draw to retire.
+void uploadDynamicBuffer(GLenum target, GLuint buffer, size_t elementSize, size_t count,
+                         const void* data, size_t& capacity) {
+    if (count == 0) return;
+    if (count > capacity) {
+        capacity = std::max(count, capacity * 2);
+    }
+
+    glBindBuffer(target, buffer);
+    glBufferData(target, capacity * elementSize, nullptr, GL_DYNAMIC_DRAW);
+    glBufferSubData(target, 0, count * elementSize, data);
+    glBindBuffer(target, 0);
+}
+
 }  // namespace
+
+CdlodSurface::CdlodSurface(GLuint patchIndexBuffer) {
+    glGenVertexArrays(1, &m_VAO);
+    glBindVertexArray(m_VAO);
+
+    // The shared index buffer is the whole of the per-vertex input: the vertex
+    // stage reconstructs the grid coordinate from gl_VertexID.
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, patchIndexBuffer);
+
+    glGenBuffers(1, &m_patchVBO);
+    glBindBuffer(GL_ARRAY_BUFFER, m_patchVBO);
+
+    // Locations start at 4, leaving 0..3 free so the layout stays readable
+    // against the instanced-geometry shaders.
+    glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(CdlodPatch),
+                          (void*)offsetof(CdlodPatch, m_centre));
+    glEnableVertexAttribArray(4);
+    glVertexAttribDivisor(4, 1);
+
+    glVertexAttribPointer(5, 3, GL_FLOAT, GL_FALSE, sizeof(CdlodPatch),
+                          (void*)offsetof(CdlodPatch, m_uAxis));
+    glEnableVertexAttribArray(5);
+    glVertexAttribDivisor(5, 1);
+
+    glVertexAttribPointer(6, 3, GL_FLOAT, GL_FALSE, sizeof(CdlodPatch),
+                          (void*)offsetof(CdlodPatch, m_vAxis));
+    glEnableVertexAttribArray(6);
+    glVertexAttribDivisor(6, 1);
+
+    glVertexAttribIPointer(7, 1, GL_INT, sizeof(CdlodPatch),
+                           (void*)offsetof(CdlodPatch, m_level));
+    glEnableVertexAttribArray(7);
+    glVertexAttribDivisor(7, 1);
+
+    glVertexAttribIPointer(8, 1, GL_INT, sizeof(CdlodPatch),
+                           (void*)offsetof(CdlodPatch, m_instanceIndex));
+    glEnableVertexAttribArray(8);
+    glVertexAttribDivisor(8, 1);
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    glGenBuffers(1, &m_instanceDataBuffer);
+}
+
+CdlodSurface::~CdlodSurface() {
+    if (m_VAO != 0) glDeleteVertexArrays(1, &m_VAO);
+    if (m_patchVBO != 0) glDeleteBuffers(1, &m_patchVBO);
+    if (m_instanceDataBuffer != 0) glDeleteBuffers(1, &m_instanceDataBuffer);
+}
 
 CdlodHandler::CdlodHandler(SSBOManager* ssboManager)
     : m_ssboManager{ssboManager} {
@@ -61,88 +145,145 @@ CdlodHandler::CdlodHandler(SSBOManager* ssboManager)
 
     m_patchGeometry = std::make_unique<CdlodPatchGeometry>();
 
-    // Surface 0 is the built-in sphere, so a body that asks for no particular
-    // shape still has programs to draw with.
-    createSurface();
+    // The built-in sphere, so an instance that asks for no particular shape
+    // still has programs to draw with.
+    m_defaultSurface = createSurface();
+}
+
+CdlodHandler::~CdlodHandler() {
+    // Surfaces hold GL handles into the shared patch geometry and must go first.
+    m_surfaces.clear();
+    m_patchGeometry.reset();
 }
 
 std::string CdlodHandler::buildStageSource(const char* stagePath,
                                            const std::string& snippetPath) {
-    // Expands the patch include, which is where the marker lives, so every
-    // stage that includes it picks the snippet up without naming it.
+    // Expands the patch include, which is where the marker lives, so every stage
+    // that includes it picks the snippet up without naming it.
     std::string source{ShaderProgram::loadTextFileFromPath(stagePath)};
     const std::string surfacePath{snippetPath.empty() ? s_defaultSurfacePath : snippetPath};
-    const std::string body{ShaderProgram::loadTextFileFromPath(surfacePath)};
 
-    const size_t markerPos{source.find(s_surfaceMarker)};
-    if (markerPos == std::string::npos) {
-        throw std::runtime_error("CDLOD stage is missing the surface marker");
-    }
-    source.replace(markerPos, std::char_traits<char>::length(s_surfaceMarker), body);
+    spliceSurfaceBody(source, ShaderProgram::loadTextFileFromPath(surfacePath));
     return source;
 }
 
-void CdlodHandler::buildSurfacePrograms(Surface& surface) {
+void CdlodHandler::buildSurfacePrograms(CdlodSurface& surface) {
+    // Compiled into fresh programs first: every load throws on a compile error,
+    // so a snippet that does not build leaves the surface's own programs alone.
+    //
     // The snippet goes into all three stages that consult the surface: the two
     // vertex stages for where it is, the G-buffer fragment stage for how it
     // faces. The shadow pass shades nothing, so its fragment stage is shared.
-    surface.gbufferProgram.loadVertexShader(
-        buildStageSource(s_gbufferVertexPath, surface.snippetPath));
-    surface.gbufferProgram.loadFragmentShader(
-        buildStageSource(s_gbufferFragmentPath, surface.snippetPath));
-    surface.gbufferProgram.linkShaders();
+    auto gbufferProgram{std::make_unique<ShaderProgram>()};
+    gbufferProgram->loadVertexShader(
+        buildStageSource(s_gbufferVertexPath, surface.m_snippetPath));
+    gbufferProgram->loadFragmentShader(
+        buildStageSource(s_gbufferFragmentPath, surface.m_snippetPath));
+    gbufferProgram->linkShaders();
 
-    surface.depthProgram.loadVertexShader(
-        buildStageSource(s_depthVertexPath, surface.snippetPath));
-    surface.depthProgram.loadFragmentShaderFromPath(s_depthFragmentPath);
-    surface.depthProgram.linkShaders();
+    auto depthProgram{std::make_unique<ShaderProgram>()};
+    depthProgram->loadVertexShader(
+        buildStageSource(s_depthVertexPath, surface.m_snippetPath));
+    depthProgram->loadFragmentShaderFromPath(s_depthFragmentPath);
+    depthProgram->linkShaders();
+
+    // Installed in place, so the instances this surface owns pick the new
+    // programs up rather than staying with the ones they were created under.
+    surface.m_gbufferProgram = std::move(gbufferProgram);
+    surface.m_depthProgram = std::move(depthProgram);
 }
 
-size_t CdlodHandler::createSurface(const std::string& snippetPath) {
-    auto surface{std::make_unique<Surface>()};
-    surface->snippetPath = snippetPath;
+std::weak_ptr<CdlodSurface> CdlodHandler::createSurface(const std::string& snippetPath) {
+    auto surface{std::make_shared<CdlodSurface>(m_patchGeometry->getIndexBuffer())};
+    surface->m_snippetPath = snippetPath;
 
     buildSurfacePrograms(*surface);
     m_surfaces.push_back(std::move(surface));
-    return m_surfaces.size() - 1;
+    return m_surfaces.back();
 }
 
-CdlodHandler::~CdlodHandler() {
-    // Bodies hold GL handles and must go before the shared patch geometry.
-    m_bodies.clear();
-    m_patchGeometry.reset();
-}
+void CdlodHandler::removeSurface(std::weak_ptr<CdlodSurface> surfaceWeak) {
+    const std::shared_ptr<CdlodSurface> surface{surfaceWeak.lock()};
+    if (!surface) return;
 
-size_t CdlodHandler::createBody(int ssboIndex, const CdlodConfig& config,
-                                size_t surfaceIndex) {
-    if (surfaceIndex >= m_surfaces.size()) {
-        throw std::runtime_error("CdlodHandler::createBody: invalid surface index");
-    }
-
-    for (size_t ii{0}; ii < m_bodies.size(); ++ii) {
-        if (!m_bodies[ii]) {
-            m_bodies[ii] = std::make_unique<CdlodBody>(ssboIndex, config, surfaceIndex,
-                                                       *m_patchGeometry);
-            return ii;
+    for (auto it{m_surfaces.begin()}; it != m_surfaces.end(); ++it) {
+        if (*it == surface) {
+            m_surfaces.erase(it);
+            return;
         }
     }
-    m_bodies.push_back(
-        std::make_unique<CdlodBody>(ssboIndex, config, surfaceIndex, *m_patchGeometry));
-    return m_bodies.size() - 1;
 }
 
-void CdlodHandler::removeBody(size_t bodyHandle) {
-    if (bodyHandle >= m_bodies.size()) return;
-    m_bodies[bodyHandle].reset();
+std::weak_ptr<CdlodInstance> CdlodHandler::createInstance(
+    int ssboIndex, const CdlodConfig& config, std::weak_ptr<CdlodSurface> surfaceWeak) {
+    const std::shared_ptr<CdlodSurface> surface{surfaceWeak.lock()};
+    if (!surface) {
+        throw std::runtime_error("CdlodHandler::createInstance: surface has expired");
+    }
+
+    surface->m_instances.push_back(
+        std::make_shared<CdlodInstance>(ssboIndex, config, surface.get()));
+    return surface->m_instances.back();
+}
+
+void CdlodHandler::removeInstance(std::weak_ptr<CdlodInstance> instanceWeak) {
+    const std::shared_ptr<CdlodInstance> instance{instanceWeak.lock()};
+    if (!instance || !instance->m_surface) return;
+
+    std::vector<std::shared_ptr<CdlodInstance>>& instances{instance->m_surface->m_instances};
+    for (auto it{instances.begin()}; it != instances.end(); ++it) {
+        if (*it == instance) {
+            // Erasing renumbers the instances after this one, which is why the
+            // index the patches carry is assigned per frame rather than kept.
+            instances.erase(it);
+            return;
+        }
+    }
 }
 
 void CdlodHandler::update(const FrameRenderParams& params) {
-    for (const std::unique_ptr<CdlodBody>& body : m_bodies) {
-        if (!body) continue;
-        const MeshTransform& transform{
-            m_ssboManager->getMeshTransform(body->getSsboIndex())};
-        body->update(cameraInBodySpace(transform, params));
+    for (const std::shared_ptr<CdlodSurface>& surface : m_surfaces) {
+        selectVisibleNodes(*surface, params);
+        uploadSelection(*surface);
     }
+}
+
+void CdlodHandler::selectVisibleNodes(CdlodSurface& surface,
+                                      const FrameRenderParams& params) {
+    surface.m_selectedPatches.clear();
+    surface.m_instanceData.assign(surface.m_instances.size(), CdlodInstanceData{});
+
+    // Every instance appends its own leaves to the one buffer this surface
+    // draws from, and is stamped with where its parameters sit alongside them.
+    for (size_t instanceIndex{0}; instanceIndex < surface.m_instances.size();
+         ++instanceIndex) {
+        CdlodInstance& instance{*surface.m_instances[instanceIndex]};
+
+        const MeshTransform& transform{
+            m_ssboManager->getMeshTransform(instance.m_ssboIndex)};
+        instance.m_cameraBodyPosition = cameraInBodySpace(transform, params);
+
+        // The tree describes patches, not who owns them, so the patches it just
+        // appended are stamped here with where this instance's parameters sit.
+        const size_t firstPatch{surface.m_selectedPatches.size()};
+        instance.m_tree.updateAndSelect(instance.m_cameraBodyPosition,
+                                        surface.m_selectedPatches);
+        for (size_t patch{firstPatch}; patch < surface.m_selectedPatches.size(); ++patch) {
+            surface.m_selectedPatches[patch].m_instanceIndex =
+                static_cast<int32_t>(instanceIndex);
+        }
+
+        surface.m_instanceData[instanceIndex] = makeInstanceData(instance);
+    }
+}
+
+void CdlodHandler::uploadSelection(CdlodSurface& surface) {
+    uploadDynamicBuffer(GL_ARRAY_BUFFER, surface.m_patchVBO,
+                        sizeof(CdlodPatch), surface.m_selectedPatches.size(),
+                        surface.m_selectedPatches.data(), surface.m_patchCapacity);
+    uploadDynamicBuffer(GL_SHADER_STORAGE_BUFFER, surface.m_instanceDataBuffer,
+                        sizeof(CdlodInstanceData), surface.m_instanceData.size(),
+                        surface.m_instanceData.data(), surface.m_instanceDataCapacity);
 }
 
 void CdlodHandler::renderGeometry(const FrameRenderParams& params) {
@@ -154,8 +295,6 @@ void CdlodHandler::renderDepth(const FrameRenderParams& params) {
 }
 
 void CdlodHandler::renderAllSurfaces(const FrameRenderParams& params, bool isGeometryPass) {
-    if (m_bodies.empty()) return;
-
     // Wireframe is a view of the surface, not of the shadow map: a wireframe
     // depth pass would punch holes in everything the body shadows. Set around
     // every surface rather than inside, so the mode is not toggled per program.
@@ -164,10 +303,34 @@ void CdlodHandler::renderAllSurfaces(const FrameRenderParams& params, bool isGeo
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     }
 
-    // Each surface is its own program, so the bodies are drawn grouped by shape
-    // rather than in creation order; one program bind per shape, not per body.
-    for (size_t surfaceIndex{0}; surfaceIndex < m_surfaces.size(); ++surfaceIndex) {
-        renderSurfaceBodies(*m_surfaces[surfaceIndex], surfaceIndex, params, isGeometryPass);
+    // One program bind and one draw per surface, however many instances wear it.
+    for (const std::shared_ptr<CdlodSurface>& surface : m_surfaces) {
+        if (surface->m_selectedPatches.empty()) continue;
+
+        ShaderProgram& program{isGeometryPass ? *surface->m_gbufferProgram
+                                              : *surface->m_depthProgram};
+        program.use();
+        const unsigned int activeProgram{program.getID()};
+
+        // view, projection, u_time, u_timeRemainder and the Dekker-split camera,
+        // shared with every other camera-relative instanced draw.
+        setInstanceFrameUniforms(activeProgram, params);
+
+        const GLint patchVerticesLoc{glGetUniformLocation(activeProgram, "u_patchVertices")};
+        if (patchVerticesLoc != -1) {
+            glUniform1i(patchVerticesLoc, CdlodPatchGeometry::k_patchVertices);
+        }
+        const GLint colorByLevelLoc{glGetUniformLocation(activeProgram, "u_colorByLevel")};
+        if (colorByLevelLoc != -1) {
+            glUniform1i(colorByLevelLoc, m_wireframe ? 1 : 0);
+        }
+
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, k_instanceDataBinding,
+                         surface->m_instanceDataBuffer);
+        glBindVertexArray(surface->m_VAO);
+        glDrawElementsInstanced(GL_TRIANGLES, m_patchGeometry->getIndexCount(),
+                                GL_UNSIGNED_SHORT, 0,
+                                static_cast<GLsizei>(surface->m_selectedPatches.size()));
     }
 
     glBindVertexArray(0);
@@ -177,76 +340,16 @@ void CdlodHandler::renderAllSurfaces(const FrameRenderParams& params, bool isGeo
     }
 }
 
-void CdlodHandler::renderSurfaceBodies(Surface& surface, size_t surfaceIndex,
-                                       const FrameRenderParams& params, bool isGeometryPass) {
-    const auto usesThisSurface = [&](const std::unique_ptr<CdlodBody>& body) {
-        return body && body->getSurfaceIndex() == surfaceIndex &&
-               body->getInstanceCount() > 0;
-    };
-    if (std::none_of(m_bodies.begin(), m_bodies.end(), usesThisSurface)) return;
-
-    ShaderProgram& program{isGeometryPass ? surface.gbufferProgram : surface.depthProgram};
-    program.use();
-    const unsigned int activeProgram{program.getID()};
-
-    // view, projection, u_time, u_timeRemainder and the Dekker-split camera,
-    // shared with every other camera-relative instanced draw.
-    setInstanceFrameUniforms(activeProgram, params);
-
-    const GLint patchVerticesLoc{glGetUniformLocation(activeProgram, "u_patchVertices")};
-    if (patchVerticesLoc != -1) {
-        glUniform1i(patchVerticesLoc, CdlodPatchGeometry::k_patchVertices);
-    }
-
-    const GLint halfExtentLoc{glGetUniformLocation(activeProgram, "u_halfExtent")};
-    const GLint rangeFactorLoc{glGetUniformLocation(activeProgram, "u_lodRangeFactor")};
-    const GLint cameraBodyLoc{glGetUniformLocation(activeProgram, "u_cameraBodyPosition")};
-    const GLint baseColorLoc{glGetUniformLocation(activeProgram, "u_baseColor")};
-    const GLint colorByLevelLoc{glGetUniformLocation(activeProgram, "u_colorByLevel")};
-
-    if (colorByLevelLoc != -1) {
-        glUniform1i(colorByLevelLoc, m_wireframe ? 1 : 0);
-    }
-
-    for (const std::unique_ptr<CdlodBody>& body : m_bodies) {
-        if (!usesThisSurface(body)) continue;
-
-        const CdlodConfig& config{body->getConfig()};
-        if (halfExtentLoc != -1) {
-            glUniform1f(halfExtentLoc, static_cast<float>(config.m_halfExtent));
-        }
-        if (rangeFactorLoc != -1) {
-            glUniform1f(rangeFactorLoc, static_cast<float>(config.m_lodRangeFactor));
-        }
-        if (cameraBodyLoc != -1) {
-            const glm::vec3 cameraBody{body->getCameraBodyPosition()};
-            glUniform3fv(cameraBodyLoc, 1, &cameraBody[0]);
-        }
-        if (baseColorLoc != -1) {
-            const glm::vec4 baseColor{config.m_baseColor};
-            glUniform4fv(baseColorLoc, 1, &baseColor[0]);
-        }
-
-        glBindVertexArray(body->getVAO());
-        glDrawElementsInstanced(GL_TRIANGLES, m_patchGeometry->getIndexCount(),
-                                GL_UNSIGNED_SHORT, 0, body->getInstanceCount());
-    }
-}
-
 std::pair<bool, std::string> CdlodHandler::reloadShaders() {
     std::string allErrors;
     bool allSuccess{true};
 
     // Rebuilt from source rather than delegated to ShaderProgram::reloadShaders:
     // the vertex stages are compiled from a spliced string and so carry no path
-    // to reload from. Each surface is rebuilt into a fresh one, so a snippet
-    // that fails to compile leaves the working programs in place.
-    for (std::unique_ptr<Surface>& surfacePtr : m_surfaces) {
-        auto fresh{std::make_unique<Surface>()};
-        fresh->snippetPath = surfacePtr->snippetPath;
+    // to reload from.
+    for (const std::shared_ptr<CdlodSurface>& surface : m_surfaces) {
         try {
-            buildSurfacePrograms(*fresh);
-            surfacePtr = std::move(fresh);
+            buildSurfacePrograms(*surface);
         } catch (const std::exception& e) {
             allSuccess = false;
             allErrors += std::string("CDLOD surface reload failed: ") + e.what() + "\n";

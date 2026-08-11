@@ -23,6 +23,8 @@ class InstanceHandler;
 class SSBOManager;
 class ShadowRenderer;
 class CdlodHandler;
+struct CdlodInstance;
+struct CdlodSurface;
 
 class TimeHandler;
 
@@ -173,21 +175,29 @@ public:
     void removeRayVolumeInstance(std::weak_ptr<Geometry> geometry,
                                  std::weak_ptr<Instance> instance);
 
-    // CDLOD bodies: cube-quadtree surfaces subdivided by distance, drawn opaque
-    // and shadow casting. The body is placed through the shared transform SSBO,
-    // so the caller allocates an index (m_ssboManager->allocateIndex()) and
-    // drives it with updateMeshTransform, exactly like a mesh or an instance.
-    // That lets anything else on the same body cite the same index.
+    // CDLOD instances: cube-quadtree surfaces subdivided by distance, drawn
+    // opaque and shadow casting. An instance is placed through the shared
+    // transform SSBO, so the caller allocates an index
+    // (m_ssboManager->allocateIndex()) and drives it with updateMeshTransform,
+    // exactly like a mesh or an instanced geometry. That lets anything else on
+    // the same body cite the same index.
     //
     // A surface is the GLSL that shapes the body: it maps a point on the base
     // sphere to the final surface, and returns the normal there. Empty path
-    // gives the bare sphere. Bodies sharing a surface share its programs.
-    size_t createCdlodSurface(const std::string& snippetPath = "");
-    size_t createCdlodBody(int ssboIndex, const CdlodConfig& config,
-                           size_t surfaceIndex = 0);
-    void removeCdlodBody(size_t bodyHandle);
+    // gives the bare sphere. Instances sharing a surface share its programs.
+    // There is no geometry level in between, unlike createInstanceGeometry: a
+    // subdivided body has no mesh to share, only its own quadtree.
+    std::weak_ptr<CdlodSurface> createCdlodSurface(const std::string& snippetPath = "");
+    // Drops the engine's reference; the surface lives on until its last instance
+    // goes. getDefaultCdlodSurface is the built-in sphere.
+    void removeCdlodSurface(std::weak_ptr<CdlodSurface> surface);
+    std::weak_ptr<CdlodSurface> getDefaultCdlodSurface() const;
+    std::weak_ptr<CdlodInstance> createCdlodInstance(int ssboIndex,
+                                                     const CdlodConfig& config,
+                                                     std::weak_ptr<CdlodSurface> surface);
+    void removeCdlodInstance(std::weak_ptr<CdlodInstance> instance);
     // Debug view of the subdivision: wireframe patches tinted by quadtree level.
-    // Scoped to the CDLOD bodies, unlike setTriangleRenderMode above.
+    // Scoped to the CDLOD instances, unlike setTriangleRenderMode above.
     void setCdlodWireframe(bool wireframe);
     bool getCdlodWireframe() const;
 

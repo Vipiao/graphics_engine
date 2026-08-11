@@ -358,17 +358,26 @@ bool GraphicsEngine::getSsaoEnabled() const {
     return m_deferredRenderer->getSSAOSettings().enabled;
 }
 
-size_t GraphicsEngine::createCdlodSurface(const std::string& snippetPath) {
+std::weak_ptr<CdlodSurface> GraphicsEngine::createCdlodSurface(
+    const std::string& snippetPath) {
     return m_cdlodHandler->createSurface(snippetPath);
 }
 
-size_t GraphicsEngine::createCdlodBody(int ssboIndex, const CdlodConfig& config,
-                                       size_t surfaceIndex) {
-    return m_cdlodHandler->createBody(ssboIndex, config, surfaceIndex);
+void GraphicsEngine::removeCdlodSurface(std::weak_ptr<CdlodSurface> surface) {
+    m_cdlodHandler->removeSurface(surface);
 }
 
-void GraphicsEngine::removeCdlodBody(size_t bodyHandle) {
-    m_cdlodHandler->removeBody(bodyHandle);
+std::weak_ptr<CdlodSurface> GraphicsEngine::getDefaultCdlodSurface() const {
+    return m_cdlodHandler->getDefaultSurface();
+}
+
+std::weak_ptr<CdlodInstance> GraphicsEngine::createCdlodInstance(
+    int ssboIndex, const CdlodConfig& config, std::weak_ptr<CdlodSurface> surface) {
+    return m_cdlodHandler->createInstance(ssboIndex, config, std::move(surface));
+}
+
+void GraphicsEngine::removeCdlodInstance(std::weak_ptr<CdlodInstance> instance) {
+    m_cdlodHandler->removeInstance(instance);
 }
 
 void GraphicsEngine::setCdlodWireframe(bool wireframe) {

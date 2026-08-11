@@ -8,13 +8,13 @@ layout(std430, binding = 0) buffer MeshDataBuffer {
    MeshData meshDataBuffer[];
 };
 
-// Per-node attributes. The shading-only ones are left undeclared; the depth pass
-// needs nothing but the position.
-layout (location = 4) in vec2 nodeOffset;
-layout (location = 5) in float nodeSize;
-layout (location = 6) in int faceIndex;
-layout (location = 7) in int nodeLevel;
-layout (location = 8) in int ssboIndex;
+// Per-node attributes; the layout is the G-buffer stage's, since both are drawn
+// from the same instance buffer. The depth pass needs nothing but the position.
+layout (location = 4) in vec3 patchCentre;
+layout (location = 5) in vec3 patchUAxis;
+layout (location = 6) in vec3 patchVAxis;
+layout (location = 7) in int patchLevel;
+layout (location = 8) in int instanceIndex;
 
 uniform uint u_time;
 uniform float u_timeRemainder;
@@ -24,21 +24,22 @@ uniform vec3 u_cameraPositionLow;
 uniform mat4 view;
 uniform mat4 projection;
 
-// u_halfExtent, u_patchVertices, u_lodRangeFactor and u_cameraBodyPosition are
-// declared by cdlod_patch.glsl, which every stage consulting the surface shares.
+// u_patchVertices and the instance buffer are declared by cdlod_patch.glsl, which
+// every stage consulting the surface shares.
 
 void main() {
-   MeshData meshData = meshDataBuffer[ssboIndex];
+   CdlodInstanceData instance = cdlodInstanceBuffer[instanceIndex];
+   MeshData meshData = meshDataBuffer[instance.ssboIndex];
 
    uint deltaTime = u_time - meshData.time;
    float deltaTimeFloat = float(deltaTime) + u_timeRemainder;
 
    // The same displacement the G-buffer stage applies, or the shadow map would
    // be cast by a different surface than the one it falls on.
-   vec2 patchUv =
-      cdlodMorphedPatchUv(gl_VertexID, nodeOffset, nodeSize, faceIndex, nodeLevel);
-   vec3 spherePosition = cdlodSpherePoint(
-      cdlodPatchFaceUv(patchUv, nodeOffset, nodeSize), faceIndex);
+   vec2 patchUv = cdlodMorphedPatchUv(gl_VertexID, patchCentre, patchUAxis, patchVAxis,
+                                      patchLevel, instance);
+   vec3 spherePosition = cdlodPatchPoint(patchUv, patchCentre, patchUAxis, patchVAxis,
+                                         instance.halfExtent);
    vec3 localPosition = cdlodDisplacedPosition(spherePosition);
 
    vec3 meshPositionL = dekkerSubtract(

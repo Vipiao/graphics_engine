@@ -9,12 +9,16 @@ layout(std430, binding = 0) buffer MeshDataBuffer {
 };
 
 // No per-vertex attributes: the patch grid comes from gl_VertexID.
-// Per-node attributes (from the body's instance VBO).
-layout (location = 4) in vec2 nodeOffset;
-layout (location = 5) in float nodeSize;
-layout (location = 6) in int faceIndex;
-layout (location = 7) in int nodeLevel;
-layout (location = 8) in int ssboIndex;
+// Per-node attributes (from the shared instance VBO). Locations start at 4,
+// leaving 0..3 free so the layout stays readable against the instanced-geometry
+// shaders. Location 8 carries the CDLOD instance rather than the SSBO index
+// those shaders have there: everything true of the whole body, that index
+// included, is reached through it.
+layout (location = 4) in vec3 patchCentre;
+layout (location = 5) in vec3 patchUAxis;
+layout (location = 6) in vec3 patchVAxis;
+layout (location = 7) in int patchLevel;
+layout (location = 8) in int instanceIndex;
 
 uniform uint u_time;
 uniform float u_timeRemainder;
@@ -24,9 +28,8 @@ uniform vec3 u_cameraPositionLow;
 uniform mat4 view;
 uniform mat4 projection;
 
-// u_halfExtent, u_patchVertices, u_lodRangeFactor and u_cameraBodyPosition are
-// declared by cdlod_patch.glsl, which every stage consulting the surface shares.
-uniform vec4 u_baseColor;
+// u_patchVertices and the instance buffer are declared by cdlod_patch.glsl, which
+// every stage consulting the surface shares.
 // Tints each quadtree level differently so the debug view shows which level a
 // patch was selected at, not just where its edges are.
 uniform bool u_colorByLevel;
@@ -35,6 +38,9 @@ uniform bool u_colorByLevel;
 // stage renormalizes it and evaluates the surface normal there, so the shading
 // frequency follows the pixels rather than the patch's vertex spacing.
 out vec3 vert_spherePosition;
+// The radius to renormalize it to. Constant across a body, so the fragment
+// stage takes it from here rather than reading the instance buffer per pixel.
+flat out float vert_halfExtent;
 // Body -> view rotation, for taking that normal into the space the G-buffer
 // stores. Constant across a body, so it is passed flat rather than interpolated.
 flat out mat3 vert_bodyToView;
@@ -42,16 +48,17 @@ out vec4 vert_color;
 flat out float vert_emissiveScalar;
 
 void main() {
-   MeshData meshData = meshDataBuffer[ssboIndex];
+   CdlodInstanceData instance = cdlodInstanceBuffer[instanceIndex];
+   MeshData meshData = meshDataBuffer[instance.ssboIndex];
 
    uint deltaTime = u_time - meshData.time;
    float deltaTimeFloat = float(deltaTime) + u_timeRemainder;
 
    // Step 1: patch vertex -> position on the body, in the body's own frame
-   vec2 patchUv =
-      cdlodMorphedPatchUv(gl_VertexID, nodeOffset, nodeSize, faceIndex, nodeLevel);
-   vec3 spherePosition = cdlodSpherePoint(
-      cdlodPatchFaceUv(patchUv, nodeOffset, nodeSize), faceIndex);
+   vec2 patchUv = cdlodMorphedPatchUv(gl_VertexID, patchCentre, patchUAxis, patchVAxis,
+                                      patchLevel, instance);
+   vec3 spherePosition = cdlodPatchPoint(patchUv, patchCentre, patchUAxis, patchVAxis,
+                                         instance.halfExtent);
 
    // Position only. The normal belonging to this surface is evaluated per pixel
    // instead, so nothing here has to carry a shading frame.
@@ -72,8 +79,9 @@ void main() {
    vec4 viewPos = view * vec4(meshPositionL + worldTransformedPos, 1.0);
 
    vert_spherePosition = spherePosition;
+   vert_halfExtent = instance.halfExtent;
    vert_bodyToView = mat3(view) * worldOrientation;
-   vert_color = u_colorByLevel ? vec4(cdlodLevelColor(nodeLevel), 1.0) : u_baseColor;
+   vert_color = u_colorByLevel ? vec4(cdlodLevelColor(patchLevel), 1.0) : instance.baseColor;
    vert_emissiveScalar = meshData.emissiveScalar;
 
    gl_Position = projection * viewPos;
