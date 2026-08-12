@@ -7,6 +7,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glad/glad.h>
+#include "../Texture2D.h"
 
 // Reusable instanced-geometry building block: a mesh uploaded once and drawn
 // with many per-instance transforms/colors/textures, in camera-relative
@@ -99,6 +100,20 @@ public:
     std::vector<InstanceData> m_instanceData;
     size_t m_instanceBufferCapacity{0};
 
+    // The textures this geometry's instances may name, in the order they were
+    // registered: the index is the texture unit, which is what an instance
+    // stores and what the shader indexes u_textures with.
+    //
+    // Scoped to the geometry because that is the scope of a draw call, which is
+    // the scope the 32-unit limit actually applies to. A geometry needs slots
+    // only for what its own instances wear -- two for a character's parts --
+    // rather than for everything the renderer has ever loaded, and unrelated
+    // geometries reuse the same low-numbered slots.
+    //
+    // Weakly held: the store owns the textures and may outlive or predecease
+    // any one geometry.
+    std::vector<std::weak_ptr<Texture2D>> m_textureUnits;
+
     Geometry() : m_uniqueId(s_nextGeometryId++), m_VAO(0), m_VBO(0), m_EBO(0),
                  m_vertexCount(0), m_indexCount(0), m_hasIndices(false), m_instanceVBO(0) {}
     ~Geometry();
@@ -119,6 +134,12 @@ public:
     // Instance management methods
     void setRenderLayer(RenderLayer layer) { m_renderLayer = layer; }
     RenderLayer getRenderLayer() const { return m_renderLayer; }
+
+    // The unit this geometry's instances reach the texture through, registering
+    // it if this geometry has not named it before. Registering the same texture
+    // twice returns the unit it already has rather than spending a second.
+    // Throws once the geometry has as many textures as the shaders can bind.
+    int addTexture(std::weak_ptr<Texture2D> texture);
     std::weak_ptr<Instance> addInstance(
         int ssboIndex, int colorTextureUnit = -1, int normalTextureUnit = -1,
         int materialTextureUnit = -1,

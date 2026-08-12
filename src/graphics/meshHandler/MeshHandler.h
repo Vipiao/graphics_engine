@@ -87,6 +87,11 @@
 #include "../ShaderProgram.h"
 #include "../SSBOManager.h"
 #include "../FrameRenderParams.h"
+#include "../Texture2D.h"
+
+#include <memory>
+
+class TextureStore;
 
 #include <glm/glm.hpp>
 #include <vector>
@@ -106,6 +111,11 @@ struct Vertex {
    glm::vec4 color;
    uint32_t meshIndex;
    uint32_t triangleId;
+   // Colour, normal, material and mask units, one byte each; see
+   // MeshHandler::packTextureUnits. Per vertex rather than per mesh so one mesh
+   // can wear more than one material -- a grid is a single mesh, and its blocks
+   // are not obliged to share an atlas.
+   uint32_t textureUnits;
 };
 #pragma pack(pop)
 
@@ -129,21 +139,32 @@ public:
       unsigned int m_textureUnit{};
    };
 
-   explicit MeshHandler(size_t maxTriangles, SSBOManager* ssboManager);
+   explicit MeshHandler(size_t maxTriangles, SSBOManager* ssboManager,
+                        TextureStore* textureStore);
    ~MeshHandler();
 
    // Owns GL buffer/VAO/texture handles; copying would double-delete them.
    MeshHandler(const MeshHandler&) = delete;
    MeshHandler& operator=(const MeshHandler&) = delete;
 
+   // Packs four texture units into the single value a Vertex carries. -1, or any
+   // unit the shaders cannot bind, means "no texture" for that slot.
+   static uint32_t packTextureUnits(int colorTextureUnit, int normalTextureUnit,
+                                    int materialTextureUnit, int maskTextureUnit);
+   // What packTextureUnits gives for four absent textures.
+   static uint32_t noTextureUnits() { return packTextureUnits(-1, -1, -1, -1); }
+
    void addMesh(int ssboIndex);
+   // textureUnits is per vertex and packed by packTextureUnits; null leaves the
+   // triangles untextured.
    std::vector<uint32_t> appendTrianglesToMesh(
       int meshIndex, const std::vector<glm::dvec3>* vertices,
       const std::vector<glm::dvec3>* normals,
       const std::vector<glm::dvec3>* tangents,
       const std::vector<glm::dvec2>* uvs,
       const std::vector<double>* occlusionFactors = nullptr,
-      const std::vector<glm::dvec4>* colors = nullptr
+      const std::vector<glm::dvec4>* colors = nullptr,
+      const std::vector<uint32_t>* textureUnits = nullptr
    );
    // removeTrianglesFromMesh: "triangleIndices" are the indices of the triangles you want to delete.
    // Does not need to be ordered
@@ -176,19 +197,21 @@ public:
 
 protected:
 
-   std::vector<Texture> m_textures{};
+   // Which of the store's textures this renderer binds; the index is the unit
+   // the shaders reach it through, so entries are appended and never moved.
+   std::vector<std::weak_ptr<Texture2D>> m_textureUnits;
+   TextureStore* m_textureStore{ nullptr };
 
    unsigned int m_vertexBuffer{};
    unsigned int m_vao{};
    int m_totalTriangles{ 0 };
    size_t m_maxTriangles{};
-   size_t m_maxTextures{ ShaderProgram::s_maxTextureUnits };
    std::vector<Vertex> m_vertexData;
    std::map<int64_t, MeshInfo> m_meshIndexToMeshInfo;
    SSBOManager* m_ssboManager;
 
 private:
    // Helper function for common rendering logic
-   void renderGeometryHelper(const FrameRenderParams& params);
+   void renderGeometryHelper(ShaderProgram& program, const FrameRenderParams& params);
 
 };

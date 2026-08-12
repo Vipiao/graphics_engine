@@ -2,6 +2,7 @@
 #include "CdlodHandler.h"
 #include "CdlodPatchGeometry.h"
 #include "../SSBOManager.h"
+#include "../TextureStore.h"
 #include "../InstanceFrameUniforms.h"
 #include <algorithm>
 #include <cstddef>
@@ -137,10 +138,13 @@ CdlodSurface::~CdlodSurface() {
     if (m_instanceDataBuffer != 0) glDeleteBuffers(1, &m_instanceDataBuffer);
 }
 
-CdlodHandler::CdlodHandler(SSBOManager* ssboManager)
-    : m_ssboManager{ssboManager} {
+CdlodHandler::CdlodHandler(SSBOManager* ssboManager, TextureStore* textureStore)
+    : m_ssboManager{ssboManager}, m_textureStore{textureStore} {
     if (!m_ssboManager) {
         throw std::runtime_error("SSBOManager cannot be null");
+    }
+    if (!m_textureStore) {
+        throw std::runtime_error("TextureStore cannot be null");
     }
 
     m_patchGeometry = std::make_unique<CdlodPatchGeometry>();
@@ -202,12 +206,59 @@ std::weak_ptr<CdlodSurface> CdlodHandler::createSurface(const std::string& snipp
     return m_surfaces.back();
 }
 
+void CdlodHandler::setSurfaceTexture(std::weak_ptr<CdlodSurface> surfaceWeak,
+                                     const std::string& samplerName,
+                                     const TextureSpec& spec) {
+    const std::shared_ptr<CdlodSurface> surface{surfaceWeak.lock()};
+    if (!surface) {
+        throw std::runtime_error("CdlodHandler::setSurfaceTexture: surface has expired");
+    }
+
+    for (CdlodSurfaceTexture& existing : surface->m_textures) {
+        if (existing.m_samplerName == samplerName) {
+            // Keeps the unit, so replacing a texture cannot renumber the ones
+            // set after it. The old one goes back to the store rather than
+            // lingering unreferenced.
+            m_textureStore->remove(existing.m_texture);
+            existing.m_texture = m_textureStore->create(spec);
+            return;
+        }
+    }
+
+    // Units are handed out in order and never reused: nothing else binds a
+    // texture during a CDLOD draw, so this surface has all of them to itself.
+    surface->m_textures.push_back(
+        CdlodSurfaceTexture{samplerName, m_textureStore->create(spec),
+                            static_cast<int>(surface->m_textures.size())});
+}
+
+void CdlodHandler::setSurfaceUniform(std::weak_ptr<CdlodSurface> surfaceWeak,
+                                     const std::string& name, float value) {
+    const std::shared_ptr<CdlodSurface> surface{surfaceWeak.lock()};
+    if (!surface) {
+        throw std::runtime_error("CdlodHandler::setSurfaceUniform: surface has expired");
+    }
+
+    for (CdlodSurfaceUniform& existing : surface->m_uniforms) {
+        if (existing.m_name == name) {
+            existing.m_value = value;
+            return;
+        }
+    }
+    surface->m_uniforms.push_back(CdlodSurfaceUniform{name, value});
+}
+
 void CdlodHandler::removeSurface(std::weak_ptr<CdlodSurface> surfaceWeak) {
     const std::shared_ptr<CdlodSurface> surface{surfaceWeak.lock()};
     if (!surface) return;
 
     for (auto it{m_surfaces.begin()}; it != m_surfaces.end(); ++it) {
         if (*it == surface) {
+            // The store owns what the snippet sampled, so hand it back rather
+            // than leaving it loaded for a surface that no longer exists.
+            for (const CdlodSurfaceTexture& texture : surface->m_textures) {
+                m_textureStore->remove(texture.m_texture);
+            }
             m_surfaces.erase(it);
             return;
         }
@@ -286,6 +337,27 @@ void CdlodHandler::uploadSelection(CdlodSurface& surface) {
                         surface.m_instanceData.data(), surface.m_instanceDataCapacity);
 }
 
+void CdlodHandler::applySurfaceInputs(const CdlodSurface& surface, unsigned int program) const {
+    // A stage that does not mention a name has no location for it, which is the
+    // ordinary case rather than an error: the depth pass reads whatever the
+    // snippet's elevation needs and nothing the shading needs.
+    for (const CdlodSurfaceTexture& texture : surface.m_textures) {
+        const GLint location{glGetUniformLocation(program, texture.m_samplerName.c_str())};
+        if (location == -1) continue;
+
+        const std::shared_ptr<Texture2D> bound{texture.m_texture.lock()};
+        if (!bound) continue;
+
+        m_textureStore->bindTexture(texture.m_unit, bound->getID());
+        glUniform1i(location, texture.m_unit);
+    }
+
+    for (const CdlodSurfaceUniform& uniform : surface.m_uniforms) {
+        const GLint location{glGetUniformLocation(program, uniform.m_name.c_str())};
+        if (location != -1) glUniform1f(location, uniform.m_value);
+    }
+}
+
 void CdlodHandler::renderGeometry(const FrameRenderParams& params) {
     renderAllSurfaces(params, /*isGeometryPass=*/true);
 }
@@ -302,6 +374,10 @@ void CdlodHandler::renderAllSurfaces(const FrameRenderParams& params, bool isGeo
     if (wireframe) {
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     }
+
+    // The passes between this one and the last bind their own targets over these
+    // units, so what the store remembers about them no longer holds.
+    m_textureStore->invalidateBindings();
 
     // One program bind and one draw per surface, however many instances wear it.
     for (const std::shared_ptr<CdlodSurface>& surface : m_surfaces) {
@@ -324,6 +400,8 @@ void CdlodHandler::renderAllSurfaces(const FrameRenderParams& params, bool isGeo
         if (colorByLevelLoc != -1) {
             glUniform1i(colorByLevelLoc, m_wireframe ? 1 : 0);
         }
+
+        applySurfaceInputs(*surface, activeProgram);
 
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, k_instanceDataBinding,
                          surface->m_instanceDataBuffer);

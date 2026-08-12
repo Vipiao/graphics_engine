@@ -210,6 +210,22 @@ void ShaderProgram::linkShaders() {
       }
    }
    m_programIsLinked = true;
+   cacheTextureUnitLocations();
+}
+
+void ShaderProgram::cacheTextureUnitLocations() {
+   // Once per link rather than once per draw. The names are fixed by the
+   // MAX_TEXTURE_UNITS this class injects, and a location cannot change while a
+   // program stays linked.
+   for (int unit{ 0 }; unit < s_maxTextureUnits; ++unit) {
+      const std::string name{ "u_textures[" + std::to_string(unit) + "]" };
+      m_textureUnitLocations[unit] = glGetUniformLocation(m_shaderProgram, name.c_str());
+   }
+}
+
+GLint ShaderProgram::getTextureUnitLocation(int unit) const {
+   if (unit < 0 || unit >= s_maxTextureUnits) return -1;
+   return m_textureUnitLocations[unit];
 }
 
 unsigned int ShaderProgram::getID() {

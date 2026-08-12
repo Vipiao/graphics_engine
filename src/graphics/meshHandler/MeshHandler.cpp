@@ -1,6 +1,6 @@
 #include "MeshHandler.h"
+#include "../TextureStore.h"
 
-#include "../STBImageLoader.h"
 #include "math/DekkerArithmetic.h"
 #include "utils/HashFunctions.h"
 
@@ -22,8 +22,8 @@
       } \
    } while(0)
 
-MeshHandler::MeshHandler(size_t maxTriangles, SSBOManager* ssboManager)
-   : m_maxTriangles(maxTriangles), m_ssboManager(ssboManager) {
+MeshHandler::MeshHandler(size_t maxTriangles, SSBOManager* ssboManager, TextureStore* textureStore)
+   : m_textureStore(textureStore), m_maxTriangles(maxTriangles), m_ssboManager(ssboManager) {
 
    m_shaderProgram.loadVertexShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/meshHandler/mesh_vertex_shader.vert");
    m_shaderProgram.loadFragmentShaderFromPath(ENGINE_ASSET_DIR "/src/graphics/shared_shaders/fragment_shader.frag");
@@ -63,7 +63,8 @@ MeshHandler::MeshHandler(size_t maxTriangles, SSBOManager* ssboManager)
        {"occlusionFactor", 1, GL_FLOAT, false, offsetof(Vertex, occlusionFactor)},
        {"color", 4, GL_FLOAT, false, offsetof(Vertex, color)},
        {"meshIndex", 1, GL_UNSIGNED_INT, true, offsetof(Vertex, meshIndex)},
-       {"triangleIndex", 1, GL_UNSIGNED_INT, true, offsetof(Vertex, triangleId)}
+       {"triangleIndex", 1, GL_UNSIGNED_INT, true, offsetof(Vertex, triangleId)},
+       {"textureUnits", 1, GL_UNSIGNED_INT, true, offsetof(Vertex, textureUnits)}
    };
    for (const auto& attr : attributes) {
       GLint attribLocation = glGetAttribLocation(m_shaderProgram.getID(), attr.name);
@@ -86,10 +87,20 @@ MeshHandler::MeshHandler(size_t maxTriangles, SSBOManager* ssboManager)
 MeshHandler::~MeshHandler() {
    glDeleteBuffers(1, &m_vertexBuffer);
    glDeleteVertexArrays(1, &m_vao);
-   
-   for (size_t ii = 0; ii < m_textures.size(); ii++) {
-      glDeleteTextures(1, &m_textures[ii].m_texture);
-   }
+}
+
+uint32_t MeshHandler::packTextureUnits(int colorTextureUnit, int normalTextureUnit,
+                                       int materialTextureUnit, int maskTextureUnit) {
+   // One byte per slot, with 255 standing for "none" where the API says -1. The
+   // shaders can bind far fewer than 255 units, so a byte is generous, and four
+   // of them cost one attribute instead of four.
+   const auto pack{[](int unit) -> uint32_t {
+      const bool bindable{unit >= 0 && unit < ShaderProgram::s_maxTextureUnits};
+      return bindable ? static_cast<uint32_t>(unit) : 255u;
+   }};
+
+   return pack(colorTextureUnit) | (pack(normalTextureUnit) << 8) |
+          (pack(materialTextureUnit) << 16) | (pack(maskTextureUnit) << 24);
 }
 
 void MeshHandler::addMesh(int ssboIndex) {
@@ -108,7 +119,8 @@ std::vector<uint32_t> MeshHandler::appendTrianglesToMesh(
    const std::vector<glm::dvec3>* tangents,
    const std::vector<glm::dvec2>* uvs,
    const std::vector<double>* occlusionFactors,
-   const std::vector<glm::dvec4>* colors
+   const std::vector<glm::dvec4>* colors,
+   const std::vector<uint32_t>* textureUnits
 ) {
    // Verify the input: Ensure vertices is not a null pointer and the size is a multiple of 3
    if (vertices == nullptr || vertices->size() % 3 != 0) {
@@ -146,7 +158,8 @@ std::vector<uint32_t> MeshHandler::appendTrianglesToMesh(
       vertices->size() != tangents->size() ||
       vertices->size() != uvs->size() ||
       (occlusionFactors != nullptr && vertices->size() != occlusionFactors->size()) ||
-      (colors != nullptr && vertices->size() != colors->size())
+      (colors != nullptr && vertices->size() != colors->size()) ||
+      (textureUnits != nullptr && vertices->size() != textureUnits->size())
    ) {
       throw std::invalid_argument("The size of vertices, normals, tangents, and uvs are not the same.");
    }
@@ -193,7 +206,8 @@ std::vector<uint32_t> MeshHandler::appendTrianglesToMesh(
          occlusionFactors != nullptr ? static_cast<float>((*occlusionFactors)[ii]) : 1.0f,
          colors != nullptr ? glm::vec4((*colors)[ii]) : glm::vec4(1.0f, 1.0f, 1.0f, 1.0f),
          static_cast<uint32_t>(meshIndex),
-         newIds.back()  // Use the last index in newIndices
+         newIds.back(),  // Use the last index in newIndices
+         textureUnits != nullptr ? (*textureUnits)[ii] : noTextureUnits()
       });
    }
 
@@ -415,6 +429,7 @@ void MeshHandler::updateTrianglesInformation(
             m_vertexData[vertexDataIndex + j].color = glm::vec4(color);
          }
       }
+
    }
 
    // Collect and sort the indices of the vertex data to be updated
@@ -563,7 +578,7 @@ void MeshHandler::render(const FrameRenderParams& params) {
    }
 
    // Use helper for common rendering logic
-   renderGeometryHelper(params);
+   renderGeometryHelper(m_shaderProgram, params);
 }
 
 void MeshHandler::renderGeometry(const FrameRenderParams& params) {
@@ -571,7 +586,7 @@ void MeshHandler::renderGeometry(const FrameRenderParams& params) {
    m_gbufferShaderProgram.use();
 
    // Use helper for common rendering logic
-   renderGeometryHelper(params);
+   renderGeometryHelper(m_gbufferShaderProgram, params);
 }
 
 void MeshHandler::renderDepth(
@@ -582,17 +597,12 @@ void MeshHandler::renderDepth(
    m_depthShaderProgram.use();
 
    // Use helper for common rendering logic
-   renderGeometryHelper(params);
+   renderGeometryHelper(m_depthShaderProgram, params);
 }
 
-void MeshHandler::renderGeometryHelper(const FrameRenderParams& params) {
-   // Get currently active shader program
-   GLint currentProgram;
-   glGetIntegerv(GL_CURRENT_PROGRAM, &currentProgram);
-   if (currentProgram == 0) {
-      throw std::runtime_error("No shader program is currently active");
-   }
-   unsigned int programID = static_cast<unsigned int>(currentProgram);
+void MeshHandler::renderGeometryHelper(ShaderProgram& program,
+                                       const FrameRenderParams& params) {
+   const unsigned int programID{program.getID()};
 
    // Set uniforms
    GLint viewLoc = glGetUniformLocation(programID, "view");
@@ -633,23 +643,20 @@ void MeshHandler::renderGeometryHelper(const FrameRenderParams& params) {
       glUniform3fv(cameraPosLowLoc, 1, glm::value_ptr(camPosLow));
    }
    
+   // The passes between this one and the last bind their own targets over these
+   // units, so what the store remembers about them no longer holds.
+   m_textureStore->invalidateBindings();
+
    // Bind textures
-   for (size_t ii = 0; ii < m_textures.size(); ii++) {
-      const Texture* texture = &m_textures[ii];
+   for (size_t unit{ 0 }; unit < m_textureUnits.size(); ++unit) {
+      const std::shared_ptr<Texture2D> texture{ m_textureUnits[unit].lock() };
+      if (!texture) continue;
 
-       // Debug check: ensure texture unit is within shader array bounds
-       if (texture->m_textureUnit >= 32) {
-           throw std::runtime_error("MeshHandler texture unit " + std::to_string(texture->m_textureUnit) +
-                                  " exceeds shader array size (32)");
-       }
+      m_textureStore->bindTexture(static_cast<int>(unit), texture->getID());
 
-      glActiveTexture(GL_TEXTURE0 + texture->m_textureUnit);
-      glBindTexture(GL_TEXTURE_2D, texture->m_texture);
-      
-      std::string textureName = "u_textures[" + std::to_string(texture->m_textureUnit) + "]";
-      GLint textureLoc = glGetUniformLocation(programID, textureName.c_str());
+      const GLint textureLoc{ program.getTextureUnitLocation(static_cast<int>(unit)) };
       if (textureLoc != -1)
-          glUniform1i(textureLoc, texture->m_textureUnit);
+          glUniform1i(textureLoc, static_cast<GLint>(unit));
    }
    
    // Render geometry with the pass owner's blend and depth state
@@ -659,43 +666,29 @@ void MeshHandler::renderGeometryHelper(const FrameRenderParams& params) {
 }
 
 MeshHandler::Texture MeshHandler::createTexture(std::string texturePath) {
-   if (m_textures.size() >= m_maxTextures) {
+   // The store loads a file once, so an equal handle means this renderer has
+   // already spent a unit on it. Units are scarce; textures are not.
+   const std::shared_ptr<Texture2D> texture{ m_textureStore->createFromFile(texturePath).lock() };
+   if (!texture) {
+      // Guarded before the search below, which compares handles: a null one
+      // matches any expired entry and would hand back somebody else's unit.
+      throw std::runtime_error("MeshHandler: store failed to create \"" + texturePath + "\"");
+   }
+
+   for (size_t unit{ 0 }; unit < m_textureUnits.size(); ++unit) {
+      if (m_textureUnits[unit].lock() == texture) {
+         return Texture{ texture->getID(), static_cast<unsigned int>(unit) };
+      }
+   }
+
+   if (m_textureUnits.size() >= static_cast<size_t>(ShaderProgram::s_maxTextureUnits)) {
       throw std::runtime_error(
-         "MeshHandler: cannot create texture \"" + texturePath +
-         "\": maximum number of textures (" + std::to_string(m_maxTextures) + ") reached");
+         "MeshHandler: cannot create texture \"" + texturePath + "\": all " +
+         std::to_string(ShaderProgram::s_maxTextureUnits) + " texture units are taken");
    }
-   // Load image data first; STBImageLoader::load throws if the file cannot be
-   // read, so no GL texture is created for a failed load.
-   int width{ 0 };
-   int height{ 0 };
-   int nrChannels{ 0 };
-   unsigned char* data = STBImageLoader::load(true, texturePath, &width, &height, &nrChannels);
-   assert((nrChannels == 3 || nrChannels == 4) && "texture must be RGB or RGBA");
 
-   unsigned int texture;
-   glGenTextures(1, &texture);
-   glBindTexture(GL_TEXTURE_2D, texture);
-   // set the texture wrapping parameters
-   // Set setting to clamp to edge to prevent artifacts.
-   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-   // set texture filtering parameters
-   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-   //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-   // create texture and generate mipmaps
-   if (nrChannels == 3) {
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
-   } else { // nrChannels == 4
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-   }
-   glGenerateMipmap(GL_TEXTURE_2D);
-   STBImageLoader::free(data);
-
-   //
-   m_textures.emplace_back(texture, (unsigned int)m_textures.size());
-
-   return m_textures.back();
+   m_textureUnits.push_back(texture);
+   return Texture{ texture->getID(), static_cast<unsigned int>(m_textureUnits.size() - 1) };
 }
 
 std::pair<bool, std::string> MeshHandler::reloadShaders() {

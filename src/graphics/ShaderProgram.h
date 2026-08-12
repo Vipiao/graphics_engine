@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <glad/glad.h>
 #include <string>
 #include <vector>
 #include <glm/glm.hpp>
@@ -45,6 +46,17 @@ private:
    // Loads the file, remembers its path for reloadShaders, and compiles.
    void loadStageFromPath(size_t stageIndex, std::string path);
 
+   // Location of every u_textures[i] in the linked program, resolved once at
+   // link time. This class injects MAX_TEXTURE_UNITS and so dictates the array's
+   // name, which makes it the right place to resolve it: a draw can then reach a
+   // sampler by index without building "u_textures[i]" to ask the driver for a
+   // location that has not changed since the program linked. -1 where the
+   // program does not sample that unit.
+   std::array<GLint, s_maxTextureUnits> m_textureUnitLocations{};
+
+   // Fills m_textureUnitLocations from the linked program.
+   void cacheTextureUnitLocations();
+
    std::array<Stage, s_stageCount> m_stages{};
    unsigned int m_shaderProgram{ 0 };
    bool m_programIsLinked{ false };
@@ -68,6 +80,10 @@ public:
    void linkShaders();
    unsigned int getID();
    void use();
+
+   // Where u_textures[unit] lives in this program, or -1 if it does not sample
+   // it. Valid after linkShaders; refreshed by reloadShaders.
+   GLint getTextureUnitLocation(int unit) const;
 
    // Shader reloading
    std::pair<bool, std::string> reloadShaders();

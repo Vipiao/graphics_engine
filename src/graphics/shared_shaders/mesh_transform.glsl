@@ -18,12 +18,8 @@ struct MeshData {
    vec4 centerOfRotation;    // Offset=80, size=16 bytes.
    vec4 scale;               // Offset=96, size=16 bytes. (xyz = scale, w = padding)
    uint time;                // Offset=112, size= 4 bytes.
-   int colorTextureUnit;     // Offset=116, size= 4 bytes. (-1 means no textures)
-   int normalTextureUnit;    // Offset=120, size= 4 bytes. (-1 means no textures)
-   int materialTextureUnit;  // Offset=124, size= 4 bytes. (-1 means no textures)
-   float emissiveScalar;     // Offset=128, size= 4 bytes.
-   int maskTextureUnit;      // Offset=132, size= 4 bytes. (-1 means no mask texture)
-   uint padding[2];          // Offset=136, size= 8 bytes. Padding to make total size 144 (divisible by 16)
+   float emissiveScalar;     // Offset=116, size= 4 bytes.
+   uint padding[2];          // Offset=120, size= 8 bytes. Padding to make total size 128 (divisible by 16)
 }; // Make sure to pad so size is divisible by 16 because you have a vec4.
 
 mat3 fromQuaternion(vec4 quaternion) {

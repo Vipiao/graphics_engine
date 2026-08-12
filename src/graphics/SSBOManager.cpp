@@ -77,13 +77,9 @@ void SSBOManager::updateMeshTransform(
     double angVel,
     const glm::dvec3& centerOfRotation,
     const glm::dvec3& scale,
-    int32_t colorTextureUnit,
-    int32_t normalTextureUnit,
-    int32_t materialTextureUnit,
     uint64_t time,
-    double emissiveScalar,
-    int32_t maskTextureUnit) {
-    
+    double emissiveScalar) {
+
     if (index >= 0 && static_cast<size_t>(index) < m_maxEntries) {
         m_meshTransforms[index] = MeshTransform{
             position, velocity, orientation, angVelAxis, angVel,
@@ -107,11 +103,7 @@ void SSBOManager::updateMeshTransform(
     data.centerOfRotation = glm::vec4{ centerOfRotation, 0 };
     data.scale = glm::vec4{ scale, 0.0 };
     data.time = static_cast<uint32_t>(time);
-    data.colorTextureUnit = colorTextureUnit;
-    data.normalTextureUnit = normalTextureUnit;
-    data.materialTextureUnit = materialTextureUnit;
     data.emissiveScalar = static_cast<float>(emissiveScalar);
-    data.maskTextureUnit = maskTextureUnit;
 
     updateData(index, data);
 }

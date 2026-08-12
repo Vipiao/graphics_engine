@@ -9,6 +9,11 @@
 #include "instancedGeometry/InstancedGeometry.h"
 // CdlodConfig.h carries the creation parameters of a CDLOD body by value.
 #include "cdlod/CdlodConfig.h"
+// Texture2D.h provides TextureSpec, which callers fill in to hand a surface
+// generated image data.
+#include "Texture2D.h"
+
+class TextureStore;
 #include <memory>
 #include <string>
 #include <vector>
@@ -99,12 +104,8 @@ public:
         double angVel,
         const glm::dvec3& centerOfRotation,
         const glm::dvec3& scale = glm::dvec3(1.0, 1.0, 1.0),
-        int32_t colorTextureUnit = -1,
-        int32_t normalTextureUnit = -1,
-        int32_t materialTextureUnit = -1,
         uint64_t physicsTimeStep = 0,
-        double emissiveScalar = 1.0,
-        int32_t maskTextureUnit = -1
+        double emissiveScalar = 1.0
     );
     
     void removeMesh(int meshId);
@@ -117,7 +118,8 @@ public:
         const std::vector<glm::dvec3>* tangents,
         const std::vector<glm::dvec2>* uvs,
         const std::vector<double>* occlusionFactors = nullptr,
-        const std::vector<glm::dvec4>* colors = nullptr);
+        const std::vector<glm::dvec4>* colors = nullptr,
+        const std::vector<uint32_t>* textureUnits = nullptr);
     void removeTrianglesFromMesh(int meshIndex, const std::vector<uint32_t>* triangleIds);
 
     MeshHandler::Texture createTexture(const std::string& texturePath);
@@ -133,10 +135,13 @@ public:
         int* outMaterialTextureUnit = nullptr
     );
     
+    // textureUnits is packed by MeshHandler::packTextureUnits and written onto
+    // every vertex of the model; the default leaves it untextured.
     std::vector<uint32_t> loadModelIntoMesh(
         int meshId,
         const std::string& modelPath,
-        bool ignoreTextureCoordinates = false
+        bool ignoreTextureCoordinates = false,
+        uint32_t textureUnits = MeshHandler::noTextureUnits()
     );
 
     // 2D mesh manager access
@@ -154,7 +159,12 @@ public:
     std::weak_ptr<Geometry> createInstanceGeometry(
         const std::vector<GeometryVertex>& vertices, RenderLayer layer = RenderLayer::Opaque);
     void releaseInstanceGeometry(std::weak_ptr<Geometry> geometry);
-    int createInstanceTexture(const std::string& texturePath);
+    // Registers a texture against the geometry that will draw it, and returns the
+    // unit to pass to that geometry's addInstance. The unit is scoped to the
+    // geometry: the same texture on two geometries gets a unit in each, while the
+    // pixels are loaded once and shared.
+    int createInstanceTexture(std::weak_ptr<Geometry> geometry,
+                              const std::string& texturePath);
 
     // Ray-volume resources: proxy-geometry volumetric effects composited with the
     // transparency (OIT) pass. A material is an injected shading body; geometries
@@ -196,6 +206,14 @@ public:
                                                      const CdlodConfig& config,
                                                      std::weak_ptr<CdlodSurface> surface);
     void removeCdlodInstance(std::weak_ptr<CdlodInstance> instance);
+    // Data for the surface's snippet to read, under names the snippet declares.
+    // Set or replace by name, and shared by every instance wearing the surface.
+    // What a texture means, and how the snippet projects a body-space point onto
+    // it, are the caller's to decide: the engine only makes it reachable.
+    void setCdlodSurfaceTexture(std::weak_ptr<CdlodSurface> surface,
+                                const std::string& samplerName, const TextureSpec& spec);
+    void setCdlodSurfaceUniform(std::weak_ptr<CdlodSurface> surface,
+                                const std::string& name, float value);
     // Debug view of the subdivision: wireframe patches tinted by quadtree level.
     // Scoped to the CDLOD instances, unlike setTriangleRenderMode above.
     void setCdlodWireframe(bool wireframe);
@@ -220,6 +238,9 @@ public:
 
 private:
     std::shared_ptr<GraphicsEngineBase> m_graphicsEngineBase;
+
+    // Declared before the renderers so it outlives every handle into it.
+    std::unique_ptr<TextureStore> m_textureStore;
 
     std::unique_ptr<DeferredRenderer> m_deferredRenderer;
     std::unique_ptr<MeshManager2D> m_meshManager2D;

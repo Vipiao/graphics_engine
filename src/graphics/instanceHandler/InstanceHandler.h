@@ -7,7 +7,11 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glad/glad.h>
-#include "../TextureManagerBase.h"
+#include "../Texture2D.h"
+
+#include <memory>
+
+class TextureStore;
 #include "../ShaderProgram.h"
 #include "../FrameRenderParams.h"
 #include "../instancedGeometry/InstancedGeometry.h"
@@ -20,7 +24,7 @@ class SSBOManager;
  */
 class InstanceHandler {
 public:
-    explicit InstanceHandler(SSBOManager* ssboManager);
+    explicit InstanceHandler(SSBOManager* ssboManager, TextureStore* textureStore);
     ~InstanceHandler();
 
     // Owns shader programs and GL handles; copying would double-delete them.
@@ -28,7 +32,10 @@ public:
     InstanceHandler& operator=(const InstanceHandler&) = delete;
 
     // Texture management
-    int createTexture(const std::string& texturePath);
+    // Registers a texture against the geometry that will draw it and returns the
+    // unit its instances name it by. Units are per geometry, so the number is
+    // meaningful only to instances of that geometry.
+    int createTexture(std::weak_ptr<Geometry> geometry, const std::string& texturePath);
     
     // Geometry management. The render layer selects which of the passes below
     // draws the geometry.
@@ -56,8 +63,9 @@ public:
     std::pair<bool, std::string> reloadShaders();
 
 private:
-    // Texture management
-    TextureManagerBase m_textureManager;
+    // The textures themselves live here; which units a draw binds them to is
+    // decided per geometry, in Geometry::m_textureUnits.
+    TextureStore* m_textureStore{nullptr};
 
     // Core data
     std::vector<std::shared_ptr<Geometry>> m_geometries;
@@ -75,5 +83,10 @@ private:
     // Common rendering logic: per-frame uniforms, texture binds, and the
     // instanced draws for every geometry on the given layer, drawn with the
     // caller's current render state.
-    void renderGeometryHelper(const FrameRenderParams& params, RenderLayer layer);
+    void renderGeometryHelper(ShaderProgram& program, const FrameRenderParams& params,
+                              RenderLayer layer);
+
+    // Binds one geometry's textures to its own units and points the program's
+    // samplers at them. Run immediately before that geometry's draw.
+    void bindGeometryTextures(const Geometry& geometry, ShaderProgram& program);
 };

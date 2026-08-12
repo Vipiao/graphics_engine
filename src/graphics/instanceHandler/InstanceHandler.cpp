@@ -1,13 +1,14 @@
 // InstanceHandler.cpp
 #include "InstanceHandler.h"
+#include "../TextureStore.h"
 #include "../ShaderProgram.h"
 #include "../SSBOManager.h"
 #include "../InstanceFrameUniforms.h"
 #include <algorithm>
 #include <stdexcept>
 
-InstanceHandler::InstanceHandler(SSBOManager* ssboManager)
-    : m_ssboManager(ssboManager) {
+InstanceHandler::InstanceHandler(SSBOManager* ssboManager, TextureStore* textureStore)
+    : m_textureStore(textureStore), m_ssboManager(ssboManager) {
     
     if (!m_ssboManager) {
         throw std::runtime_error("SSBOManager cannot be null");
@@ -43,8 +44,31 @@ void InstanceHandler::createShaderProgram() {
     m_overlayShaderProgram.linkShaders();
 }
 
-int InstanceHandler::createTexture(const std::string& texturePath) {
-    return m_textureManager.createTexture(texturePath);
+int InstanceHandler::createTexture(std::weak_ptr<Geometry> geometryWeak,
+                                   const std::string& texturePath) {
+    const std::shared_ptr<Geometry> geometry{geometryWeak.lock()};
+    if (!geometry) {
+        throw std::runtime_error("InstanceHandler::createTexture: geometry has expired");
+    }
+
+    // Loaded once for the whole engine, then given a slot in this geometry. Two
+    // geometries wearing the same texture share the pixels and spend a unit each.
+    return geometry->addTexture(m_textureStore->createFromFile(texturePath));
+}
+
+void InstanceHandler::bindGeometryTextures(const Geometry& geometry,
+                                           ShaderProgram& program) {
+    for (size_t unit{0}; unit < geometry.m_textureUnits.size(); ++unit) {
+        const std::shared_ptr<Texture2D> texture{geometry.m_textureUnits[unit].lock()};
+        if (!texture) continue;
+
+        m_textureStore->bindTexture(static_cast<int>(unit), texture->getID());
+
+        const GLint textureLoc{program.getTextureUnitLocation(static_cast<int>(unit))};
+        if (textureLoc != -1) {
+            glUniform1i(textureLoc, static_cast<GLint>(unit));
+        }
+    }
 }
 
 std::weak_ptr<Geometry> InstanceHandler::createGeometry(const std::string& modelPath,
@@ -85,7 +109,7 @@ void InstanceHandler::renderGeometry(const FrameRenderParams& params) {
     // Use G-buffer shader program
     m_gbufferShaderProgram.use();
 
-    renderGeometryHelper(params, RenderLayer::Opaque);
+    renderGeometryHelper(m_gbufferShaderProgram, params, RenderLayer::Opaque);
 }
 
 void InstanceHandler::renderDepth(const FrameRenderParams& params) {
@@ -94,7 +118,7 @@ void InstanceHandler::renderDepth(const FrameRenderParams& params) {
     // Use depth-only shader program
     m_depthShaderProgram.use();
 
-    renderGeometryHelper(params, RenderLayer::Opaque);
+    renderGeometryHelper(m_depthShaderProgram, params, RenderLayer::Opaque);
 }
 
 void InstanceHandler::renderOverlay(const FrameRenderParams& params) {
@@ -112,7 +136,7 @@ void InstanceHandler::renderOverlay(const FrameRenderParams& params) {
         glUniform3fv(lightDirLoc, 1, glm::value_ptr(lightDirFloat));
     }
 
-    renderGeometryHelper(params, RenderLayer::Overlay);
+    renderGeometryHelper(m_overlayShaderProgram, params, RenderLayer::Overlay);
 }
 
 void InstanceHandler::renderOIT(const FrameRenderParams& params) {
@@ -130,46 +154,31 @@ void InstanceHandler::renderOIT(const FrameRenderParams& params) {
         glUniform3fv(lightDirLoc, 1, glm::value_ptr(lightDirFloat));
     }
 
-    renderGeometryHelper(params, RenderLayer::Transparent);
+    renderGeometryHelper(m_oitShaderProgram, params, RenderLayer::Transparent);
 }
 
 void InstanceHandler::renderGeometryHelper(
-    const FrameRenderParams& params, RenderLayer layer) {
+    ShaderProgram& program, const FrameRenderParams& params, RenderLayer layer) {
 
-    // Get currently active shader program
-    GLint currentProgram;
-    glGetIntegerv(GL_CURRENT_PROGRAM, &currentProgram);
-    if (currentProgram == 0) {
-        throw std::runtime_error("No shader program is currently active");
-    }
-    unsigned int programID = static_cast<unsigned int>(currentProgram);
-    
+    const unsigned int programID{program.getID()};
+
     // Per-frame camera/time uniforms (view, projection, time, Dekker camera).
     setInstanceFrameUniforms(programID, params);
 
-    // Bind all textures
-    for (const auto& texture : m_textureManager.m_textures) {
-        // Debug check: ensure texture unit is within shader array bounds
-        if (texture.textureUnit >= ShaderProgram::s_maxTextureUnits) {
-            throw std::runtime_error("InstanceHandler texture unit " + std::to_string(texture.textureUnit) +
-                                   " exceeds shader array size (" +
-                                   std::to_string(ShaderProgram::s_maxTextureUnits) +
-                                   ") for texture: " + texture.path);
-        }
-        glActiveTexture(GL_TEXTURE0 + texture.textureUnit);
-        glBindTexture(GL_TEXTURE_2D, texture.textureId);
-        
-        // Set texture uniform
-        std::string textureName = "u_textures[" + std::to_string(texture.textureUnit) + "]";
-        GLint textureLoc = glGetUniformLocation(programID, textureName.c_str());
-        if (textureLoc != -1) {
-            glUniform1i(textureLoc, static_cast<GLint>(texture.textureUnit));
-        }
-    }
-    
+    // The passes between this one and the last bind their own targets over these
+    // units, so what the store remembers about them no longer holds.
+    m_textureStore->invalidateBindings();
+
     for (const auto& geometry : m_geometries) {
         if (geometry->m_instanceData.empty()) continue;
         if (geometry->m_renderLayer != layer) continue;
+
+        // Per draw, not per pass: a geometry binds only the textures its own
+        // instances name, so the 32 units bound the busiest single geometry
+        // rather than everything this renderer has loaded. Consecutive
+        // geometries wearing the same texture cost nothing, since the store
+        // skips a bind that would not change the unit.
+        bindGeometryTextures(*geometry, program);
 
         glBindVertexArray(geometry->m_VAO);
 

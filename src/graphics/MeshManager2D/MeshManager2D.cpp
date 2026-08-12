@@ -1,12 +1,13 @@
 // src/graphics/MeshManager2D.cpp
 #include "MeshManager2D.h"
+#include "../TextureStore.h"
 #include "../STBImageLoader.h"
 #include <algorithm>
 #include <iostream>
 #include <fstream>
 #include <sstream>
 
-MeshManager2D::MeshManager2D() {
+MeshManager2D::MeshManager2D(TextureStore* textureStore) : m_textureStore(textureStore) {
     initializeShaders();
 }
 
@@ -153,7 +154,27 @@ void MeshManager2D::initializeShaders() {
 }
 
 int MeshManager2D::createTexture(const std::string& path) {
-    return m_textureManager.createTexture(path);
+    // The store loads a file once, so an equal handle means this renderer has
+    // already spent a unit on it. Units are scarce; textures are not.
+    const std::shared_ptr<Texture2D> texture{m_textureStore->createFromFile(path).lock()};
+    if (!texture) {
+        // Guarded before the search below, which compares handles: a null one
+        // matches any expired entry and would hand back somebody else's unit.
+        throw std::runtime_error("MeshManager2D: store failed to create \"" + path + "\"");
+    }
+
+    for (size_t unit{0}; unit < m_textureUnits.size(); ++unit) {
+        if (m_textureUnits[unit].lock() == texture) return static_cast<int>(unit);
+    }
+
+    if (m_textureUnits.size() >= static_cast<size_t>(ShaderProgram::s_maxTextureUnits)) {
+        throw std::runtime_error(
+            "MeshManager2D: cannot create texture \"" + path + "\": all " +
+            std::to_string(ShaderProgram::s_maxTextureUnits) + " texture units are taken");
+    }
+
+    m_textureUnits.push_back(texture);
+    return static_cast<int>(m_textureUnits.size() - 1);
 }
 
 std::weak_ptr<Geometry2D> MeshManager2D::loadMesh(const std::string& geometryPath,
@@ -208,7 +229,8 @@ std::weak_ptr<Geometry2D> MeshManager2D::loadMesh(const std::string& geometryPat
     if (!texturePath.empty() && textureUnit == -1) {
         finalTextureUnit = createTexture(texturePath);
         if (finalTextureUnit >= 0) {
-            textureId = m_textureManager.m_textures[finalTextureUnit].textureId;
+            const std::shared_ptr<Texture2D> texture{m_textureUnits[finalTextureUnit].lock()};
+            if (texture) textureId = texture->getID();
         }
     } else if (textureUnit >= 0) {
         finalTextureUnit = textureUnit;

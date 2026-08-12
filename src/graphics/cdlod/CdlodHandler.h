@@ -9,12 +9,14 @@
 #include <glad/glad.h>
 #include "../ShaderProgram.h"
 #include "../FrameRenderParams.h"
+#include "../Texture2D.h"
 #include "CdlodConfig.h"
 #include "CdlodCubeFaces.h"
 #include "CdlodTree.h"
 
 class SSBOManager;
 class CdlodPatchGeometry;
+class TextureStore;
 struct CdlodSurface;
 
 // Everything true of a whole body, as the vertex stages read it. Mirrors
@@ -61,6 +63,25 @@ struct CdlodInstance {
     glm::dvec3 m_cameraBodyPosition{0.0};
 };
 
+// A texture the snippet samples, and the sampler it reads it through. The unit
+// is assigned when the texture is set and holds for the surface's life.
+struct CdlodSurfaceTexture {
+    std::string m_samplerName;
+    // Owned by the shared store, not here, so the same generated map can be
+    // reached from anywhere else that wants it.
+    std::weak_ptr<Texture2D> m_texture;
+    int m_unit{0};
+};
+
+// A scalar the snippet reads. Enough to hand a snippet the constants its data
+// was generated against, which is the whole reason it exists: a tile size or a
+// height range written into the GLSL by hand is a second source of truth for a
+// number the caller already has.
+struct CdlodSurfaceUniform {
+    std::string m_name;
+    float m_value{0.0f};
+};
+
 /**
  * @brief One surface shape, and everything drawn with it.
  *
@@ -87,6 +108,11 @@ struct CdlodSurface {
     std::string m_snippetPath;
     std::unique_ptr<ShaderProgram> m_gbufferProgram;
     std::unique_ptr<ShaderProgram> m_depthProgram;
+
+    // What the snippet reads beyond the patch itself. Opaque here: the names are
+    // the caller's, and nothing in this renderer knows what any of them mean.
+    std::vector<CdlodSurfaceTexture> m_textures;
+    std::vector<CdlodSurfaceUniform> m_uniforms;
 
     std::vector<std::shared_ptr<CdlodInstance>> m_instances;
 
@@ -130,7 +156,7 @@ struct CdlodSurface {
  */
 class CdlodHandler {
 public:
-    explicit CdlodHandler(SSBOManager* ssboManager);
+    CdlodHandler(SSBOManager* ssboManager, TextureStore* textureStore);
     ~CdlodHandler();
 
     CdlodHandler(const CdlodHandler&) = delete;
@@ -144,6 +170,15 @@ public:
     // The built-in sphere, for an instance that wants no particular shape. Like
     // any other surface, it expires if it is removed.
     std::weak_ptr<CdlodSurface> getDefaultSurface() const { return m_defaultSurface; }
+
+    // Gives the surface's snippet something to sample or read, under a name the
+    // snippet declares. Set or replace by name; both are ignored by a snippet
+    // that never mentions them. Nothing here interprets the data -- what a
+    // texture holds and how it is projected are decided entirely in the snippet.
+    void setSurfaceTexture(std::weak_ptr<CdlodSurface> surface,
+                           const std::string& samplerName, const TextureSpec& spec);
+    void setSurfaceUniform(std::weak_ptr<CdlodSurface> surface, const std::string& name,
+                           float value);
 
     // The surface owns the instance; the caller holds a weak handle that expires
     // when it is removed, so a stale handle can be recognised rather than
@@ -175,6 +210,7 @@ private:
     static constexpr GLuint k_instanceDataBinding{1};
 
     SSBOManager* m_ssboManager{nullptr};
+    TextureStore* m_textureStore{nullptr};
     std::unique_ptr<CdlodPatchGeometry> m_patchGeometry;
     // The only owner of the surfaces, and the order they are drawn in.
     std::vector<std::shared_ptr<CdlodSurface>> m_surfaces;
@@ -194,6 +230,11 @@ private:
     // Fills the surface's selection and uploads it.
     void selectVisibleNodes(CdlodSurface& surface, const FrameRenderParams& params);
     static void uploadSelection(CdlodSurface& surface);
+
+    // Binds the surface's textures and pushes its scalars into the bound
+    // program. Done per draw rather than once at link time, so a shader reload
+    // cannot leave a surface pointing its samplers at units nobody filled.
+    void applySurfaceInputs(const CdlodSurface& surface, unsigned int program) const;
 
     // Draws every surface that selected anything, in the caller's render state.
     void renderAllSurfaces(const FrameRenderParams& params, bool isGeometryPass);

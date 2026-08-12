@@ -8,6 +8,7 @@
 #include "instanceHandler/InstanceHandler.h"
 #include "rayVolume/RayVolumeHandler.h"
 #include "cdlod/CdlodHandler.h"
+#include "TextureStore.h"
 #include "shadowRenderer/ShadowRenderer.h"
 #include "utils/HashFunctions.h"
 #include <iostream>
@@ -35,23 +36,27 @@ GraphicsEngine::GraphicsEngine(
 
     // Create SSBO manager and pass to mesh handler
     m_ssboManager = std::make_unique<SSBOManager>(maxMeshes);
-    m_meshHandler = std::make_unique<MeshHandler>(maxTriangles, m_ssboManager.get());
+    // The one owner of every content texture; the renderers below only cite them.
+    m_textureStore = std::make_unique<TextureStore>();
+    m_meshHandler = std::make_unique<MeshHandler>(maxTriangles, m_ssboManager.get(),
+                                                  m_textureStore.get());
 
     // Create deferred renderer
     m_deferredRenderer = std::make_unique<DeferredRenderer>();
     m_deferredRenderer->setupGBuffer(screenWidth, screenHeight);
 
     // Create instance handler
-    m_instanceHandler = std::make_unique<InstanceHandler>(m_ssboManager.get());
+    m_instanceHandler =
+        std::make_unique<InstanceHandler>(m_ssboManager.get(), m_textureStore.get());
 
     // Create ray-volume handler (proxy-geometry volumetric effects)
     m_rayVolumeHandler = std::make_unique<RayVolumeHandler>(m_ssboManager.get());
 
     // Create CDLOD handler (distance-subdivided cube-quadtree bodies)
-    m_cdlodHandler = std::make_unique<CdlodHandler>(m_ssboManager.get());
+    m_cdlodHandler = std::make_unique<CdlodHandler>(m_ssboManager.get(), m_textureStore.get());
 
     // Create 2D mesh manager
-    m_meshManager2D = std::make_unique<MeshManager2D>();
+    m_meshManager2D = std::make_unique<MeshManager2D>(m_textureStore.get());
 
     // Create shadow renderer
     m_shadowRenderer = std::make_unique<ShadowRenderer>();
@@ -84,6 +89,8 @@ GraphicsEngine::~GraphicsEngine() {
     m_deferredRenderer.reset();
     m_meshHandler.reset();
     m_ssboManager.reset();
+    // Last: every texture handle above points into it.
+    m_textureStore.reset();
 }
 
 void GraphicsEngine::beginFrame() {
@@ -249,12 +256,8 @@ void GraphicsEngine::updateMeshTransform(
     double angVel,
     const glm::dvec3& centerOfRotation,
     const glm::dvec3& scale,
-    int32_t colorTextureUnit,
-    int32_t normalTextureUnit,
-    int32_t materialTextureUnit,
     uint64_t physicsTimeStep,
-    double emissiveScalar,
-    int32_t maskTextureUnit)
+    double emissiveScalar)
 {
     m_ssboManager->updateMeshTransform(
         meshId,
@@ -265,12 +268,8 @@ void GraphicsEngine::updateMeshTransform(
         angVel,
         centerOfRotation,
         scale,
-        colorTextureUnit,
-        normalTextureUnit,
-        materialTextureUnit,
         physicsTimeStep,
-        emissiveScalar,
-        maskTextureUnit
+        emissiveScalar
     );
 }
 
@@ -285,9 +284,10 @@ std::vector<uint32_t> GraphicsEngine::appendTrianglesToMesh(
     const std::vector<glm::dvec3>* tangents,
     const std::vector<glm::dvec2>* uvs,
     const std::vector<double>* occlusionFactors,
-    const std::vector<glm::dvec4>* colors) {
+    const std::vector<glm::dvec4>* colors,
+    const std::vector<uint32_t>* textureUnits) {
     return m_meshHandler->appendTrianglesToMesh(
-        meshIndex, vertices, normals, tangents, uvs, occlusionFactors, colors);
+        meshIndex, vertices, normals, tangents, uvs, occlusionFactors, colors, textureUnits);
 }
 
 void GraphicsEngine::removeTrianglesFromMesh(int meshIndex,
@@ -313,8 +313,9 @@ void GraphicsEngine::releaseInstanceGeometry(std::weak_ptr<Geometry> geometry) {
     m_instanceHandler->releaseGeometry(geometry);
 }
 
-int GraphicsEngine::createInstanceTexture(const std::string& texturePath) {
-    return m_instanceHandler->createTexture(texturePath);
+int GraphicsEngine::createInstanceTexture(std::weak_ptr<Geometry> geometry,
+                                          const std::string& texturePath) {
+    return m_instanceHandler->createTexture(std::move(geometry), texturePath);
 }
 
 size_t GraphicsEngine::createRayVolumeMaterial(const std::string& bodySnippetPath) {
@@ -380,6 +381,17 @@ void GraphicsEngine::removeCdlodInstance(std::weak_ptr<CdlodInstance> instance) 
     m_cdlodHandler->removeInstance(instance);
 }
 
+void GraphicsEngine::setCdlodSurfaceTexture(std::weak_ptr<CdlodSurface> surface,
+                                            const std::string& samplerName,
+                                            const TextureSpec& spec) {
+    m_cdlodHandler->setSurfaceTexture(std::move(surface), samplerName, spec);
+}
+
+void GraphicsEngine::setCdlodSurfaceUniform(std::weak_ptr<CdlodSurface> surface,
+                                            const std::string& name, float value) {
+    m_cdlodHandler->setSurfaceUniform(std::move(surface), name, value);
+}
+
 void GraphicsEngine::setCdlodWireframe(bool wireframe) {
     m_cdlodHandler->setWireframe(wireframe);
 }
@@ -401,16 +413,12 @@ int GraphicsEngine::loadModel(
     int ssboIndex = m_ssboManager->allocateIndex();
     createMesh(ssboIndex);
 
-    if (loadModelIntoMesh(ssboIndex, modelPath, ignoreTextureCoordinates).empty()) {
-        removeMesh(ssboIndex);
-        m_ssboManager->deallocateIndex(ssboIndex);
-        return -1;
-    }
-    
+    // Textures are resolved before the geometry now: their units are written
+    // into the vertices, so they have to be known before the vertices exist.
     int32_t colorTextureUnit = -1;
     int32_t normalTextureUnit = -1;
     int32_t materialTextureUnit = -1;
-    
+
     if (!colorTexturePath.empty()) {
         try {
             MeshHandler::Texture colorTexture = createTexture(colorTexturePath);
@@ -453,13 +461,22 @@ int GraphicsEngine::loadModel(
         }
     }
     
+    if (loadModelIntoMesh(ssboIndex, modelPath, ignoreTextureCoordinates,
+                          MeshHandler::packTextureUnits(colorTextureUnit, normalTextureUnit,
+                                                        materialTextureUnit, -1))
+            .empty()) {
+        removeMesh(ssboIndex);
+        m_ssboManager->deallocateIndex(ssboIndex);
+        return -1;
+    }
+
     glm::dvec3 position(0.0, 0.0, 0.0);
     glm::dvec3 velocity(0.0, 0.0, 0.0);
     glm::dquat orientation(1.0, 0.0, 0.0, 0.0);
     glm::dvec3 angVelAxis(0.0, 1.0, 0.0);
     double angVel = 0.0;
     glm::dvec3 centerOfRotation(0.0, 0.0, 0.0);
-    
+
     updateMeshTransform(
         ssboIndex,
         position,
@@ -469,9 +486,6 @@ int GraphicsEngine::loadModel(
         angVel,
         centerOfRotation,
         glm::dvec3(1.0, 1.0, 1.0), // Default scale
-        colorTextureUnit,
-        normalTextureUnit,
-        materialTextureUnit,
         0,                          // Default physics time step
         1.0                         // Default emissive scalar
     );
@@ -482,7 +496,8 @@ int GraphicsEngine::loadModel(
 std::vector<uint32_t> GraphicsEngine::loadModelIntoMesh(
     int meshId,
     const std::string& modelPath,
-    bool ignoreTextureCoordinates)
+    bool ignoreTextureCoordinates,
+    uint32_t textureUnits)
 {
     if (!std::filesystem::exists(modelPath)) {
         std::cerr << "Model file not found: " << modelPath << std::endl;
@@ -534,12 +549,18 @@ std::vector<uint32_t> GraphicsEngine::loadModelIntoMesh(
             if (positions.empty()) {
                 continue;
             }
+            // One material for the whole model, written onto every vertex of it.
+            const std::vector<uint32_t> vertexTextureUnits(positions.size(), textureUnits);
+
             std::vector<uint32_t> triangleIds = m_meshHandler->appendTrianglesToMesh(
                 meshId,
                 &positions,
                 &normals,
                 &tangents,
-                &uvs
+                &uvs,
+                nullptr,
+                nullptr,
+                &vertexTextureUnits
             );
             
             allTriangleIds.insert(allTriangleIds.end(), triangleIds.begin(), triangleIds.end());

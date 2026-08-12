@@ -8,7 +8,11 @@
 #include <string>
 #include <unordered_map>
 #include "../AssimpLoader.h"
-#include "../TextureManagerBase.h"
+#include "../Texture2D.h"
+
+#include <memory>
+
+class TextureStore;
 #include <glm/glm.hpp>
 
 /**
@@ -46,7 +50,7 @@
 
 class MeshManager2D {
 public:
-    MeshManager2D();
+    explicit MeshManager2D(TextureStore* textureStore);
     ~MeshManager2D();
 
     // Owns a shader program; copying would double-delete it.
@@ -71,8 +75,10 @@ public:
     size_t getTotalInstanceCount() const;
 
 private:
-    // Texture management
-    TextureManagerBase m_textureManager;
+    // Which of the store's textures this renderer binds; the index is the unit
+    // the shaders reach it through, so entries are appended and never moved.
+    std::vector<std::weak_ptr<Texture2D>> m_textureUnits;
+    TextureStore* m_textureStore{nullptr};
 
     // Core data
     std::vector<std::shared_ptr<Geometry2D>> m_geometries;

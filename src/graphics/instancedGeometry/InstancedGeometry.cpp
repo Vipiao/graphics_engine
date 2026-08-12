@@ -1,6 +1,8 @@
 // InstancedGeometry.cpp
 #include "InstancedGeometry.h"
 #include "../AssimpLoader.h"
+#include "../ShaderProgram.h"
+#include <cassert>
 #include <algorithm>
 #include <iostream>
 #include <stdexcept>
@@ -78,9 +80,42 @@ std::shared_ptr<Geometry> Geometry::createFromVertices(
     return geometry;
 }
 
+int Geometry::addTexture(std::weak_ptr<Texture2D> texture) {
+    const std::shared_ptr<Texture2D> registered{texture.lock()};
+    if (!registered) {
+        throw std::runtime_error("Geometry::addTexture: texture has expired");
+    }
+
+    // The store hands out one texture per source, so an equal handle means this
+    // geometry already has a unit for it. Units are the scarce thing here.
+    for (size_t unit{0}; unit < m_textureUnits.size(); ++unit) {
+        if (m_textureUnits[unit].lock() == registered) return static_cast<int>(unit);
+    }
+
+    if (m_textureUnits.size() >= static_cast<size_t>(ShaderProgram::s_maxTextureUnits)) {
+        throw std::runtime_error(
+            "Geometry::addTexture: all " +
+            std::to_string(ShaderProgram::s_maxTextureUnits) +
+            " texture units of this geometry are taken");
+    }
+
+    m_textureUnits.push_back(texture);
+    return static_cast<int>(m_textureUnits.size() - 1);
+}
+
 std::weak_ptr<Instance> Geometry::addInstance(
     int ssboIndex, int colorTextureUnit, int normalTextureUnit,
     int materialTextureUnit, const glm::dvec4& color, int maskTextureUnit) {
+    // A unit numbers this geometry's own textures, so one obtained from another
+    // geometry names whatever happens to sit at that index here -- a wrong image
+    // rather than an error. -1 is "no texture".
+    const auto unitIsOurs{[this](int unit) {
+        return unit == -1 || (unit >= 0 && static_cast<size_t>(unit) < m_textureUnits.size());
+    }};
+    assert(unitIsOurs(colorTextureUnit) && unitIsOurs(normalTextureUnit) &&
+           unitIsOurs(materialTextureUnit) && unitIsOurs(maskTextureUnit) &&
+           "Texture unit was not registered against this geometry");
+
     auto instance = std::make_shared<Instance>();
     instance->m_ssboIndex = ssboIndex;
     instance->m_colorTextureUnit = colorTextureUnit;

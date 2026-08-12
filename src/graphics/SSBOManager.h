@@ -20,17 +20,17 @@ struct MeshData {
     glm::vec4 centerOfRotation{};    // Offset=80, size=16 bytes.
     glm::vec4 scale{};               // Offset=96, size=16 bytes. (xyz = scale, w = padding)
     uint32_t time{};                 // Offset=112, size= 4 bytes.
-    int32_t colorTextureUnit{};      // Offset=116, size= 4 bytes. (-1 means no textures)
-    int32_t normalTextureUnit{};     // Offset=120, size= 4 bytes. (-1 means no textures)
-    int32_t materialTextureUnit{};   // Offset=124, size= 4 bytes. (-1 means no textures)
-    float emissiveScalar{};          // Offset=128, size= 4 bytes.
-    int32_t maskTextureUnit{-1};     // Offset=132, size= 4 bytes. (-1 means no mask texture)
-    uint32_t padding[2]{};           // Offset=136, size= 8 bytes. Padding to make total size 144 (divisible by 16)
+    float emissiveScalar{};          // Offset=116, size= 4 bytes.
+    uint32_t padding[2]{};           // Offset=120, size= 8 bytes. Padding to make total size 128 (divisible by 16)
 }; // Make sure to pad so size is divisible by 16 because you have a vec4.
 #pragma pack(pop)
 
-static_assert(sizeof(MeshData) == 144,
-    "MeshData must match the 144-byte std430 layout in mesh_transform.glsl");
+// Where a mesh is, and nothing else. Materials are named by whatever draws the
+// geometry -- a vertex attribute for meshes, the instance buffer for instanced
+// geometry -- because a texture unit means something only within one renderer's
+// pass, while this record is shared by all of them.
+static_assert(sizeof(MeshData) == 128,
+    "MeshData must match the 128-byte std430 layout in mesh_transform.glsl");
 
 // The transform arguments of the last updateMeshTransform for an index, kept at
 // the precision they were given at. MeshData itself is lossy -- position becomes
@@ -102,12 +102,8 @@ public:
         double angVel,
         const glm::dvec3& centerOfRotation,
         const glm::dvec3& scale,
-        int32_t colorTextureUnit,
-        int32_t normalTextureUnit,
-        int32_t materialTextureUnit,
         uint64_t time,
-        double emissiveScalar = 1.0,
-        int32_t maskTextureUnit = -1);
+        double emissiveScalar = 1.0);
 
     /**
      * @brief Transform last written to an index by updateMeshTransform

@@ -43,7 +43,7 @@ DebugVisualization::~DebugVisualization() {
         m_ssboManager->deallocateIndex(meshIndex);
     }
 
-    // Textures are automatically cleaned up by TextureManagerBase destructor
+    // Textures are owned and cleaned up by the shared TextureStore
     
     if (auto geometry = m_sphereGeometry.lock()) {
         m_instanceHandler->releaseGeometry(geometry);
@@ -65,8 +65,9 @@ void DebugVisualization::loadSharedResources() {
         m_sphereGeometry = m_instanceHandler->createGeometry(
             "../media/blender/02_sphere.obj", RenderLayer::Overlay);
 
-        // Load shared texture
-        m_textureIndex = m_instanceHandler->createTexture("../media/debug_red_transparent.png");
+        // Load shared texture, on the geometry that draws it
+        m_textureIndex = m_instanceHandler->createTexture(
+            m_sphereGeometry, "../media/debug_red_transparent.png");
 
         m_resourcesLoaded = true;
         std::cout << "Debug visualization shared resources loaded successfully" << std::endl;
