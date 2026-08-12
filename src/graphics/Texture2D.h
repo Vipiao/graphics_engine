@@ -12,10 +12,11 @@
  * renderer's to guess at.
  */
 struct TextureSpec {
-    // Unorm throughout. Fixed point spends its bits uniformly across a bounded
-    // range, which is what generated data with known extremes wants; a float
-    // format would coarsen with magnitude instead.
-    enum class Format { R8, RG8, R16, RG16, RGB8, RGBA8 };
+    // Fixed point spends its bits uniformly across a bounded range, which is
+    // what generated data with known extremes wants. The float format is for
+    // data whose extremes are not known in advance, which fixed point could
+    // only take by carrying a scale alongside it to map onto [0, 1].
+    enum class Format { R8, RG8, R16, RG16, RG16F, RGB8, RGBA8 };
     enum class Wrap { Repeat, ClampToEdge };
     enum class Filter { Nearest, Linear };
 

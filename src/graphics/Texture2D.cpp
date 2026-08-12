@@ -18,6 +18,9 @@ FormatLayout formatLayout(TextureSpec::Format format) {
         case TextureSpec::Format::RG8:   return {GL_RG8, GL_RG, GL_UNSIGNED_BYTE};
         case TextureSpec::Format::R16:   return {GL_R16, GL_RED, GL_UNSIGNED_SHORT};
         case TextureSpec::Format::RG16:  return {GL_RG16, GL_RG, GL_UNSIGNED_SHORT};
+        // Uploaded as full float and stored as half: the narrowing is GL's, so
+        // the caller never handles a 16-bit float itself.
+        case TextureSpec::Format::RG16F: return {GL_RG16F, GL_RG, GL_FLOAT};
         case TextureSpec::Format::RGB8:  return {GL_RGB8, GL_RGB, GL_UNSIGNED_BYTE};
         case TextureSpec::Format::RGBA8: return {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE};
     }
