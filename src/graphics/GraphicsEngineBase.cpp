@@ -244,12 +244,22 @@ glm::dmat4 GraphicsEngineBase::getViewMatrix() const {
    return viewMatrix;
 }
 
+// Where the frustum begins and ends, in metres. Far is set by the largest body
+// the scene must hold, since anything past it is not clipped gracefully but gone.
+//
+// Only the near plane costs precision: a surface at distance d lands at
+// 1 - near/d, so the metres one float32 depth step covers grow as d^2 / near and
+// far barely enters. Pulling it out leaves close geometry exactly as precise.
+static constexpr double k_nearPlaneMetres{0.1};
+static constexpr double k_farPlaneMetres{1.0e8};
+
 glm::dmat4 GraphicsEngineBase::getProjectionMatrix() const {
    double aspectRatio = getAspectRatio();
 
    // Set m_fieldOfView as horizontal field of view.
    double fieldOfViewVertical = 2.0 * atan(tan(m_fieldOfView / 2.0) / aspectRatio);
-   return glm::perspective(fieldOfViewVertical, aspectRatio, 0.1, 10000.);
+   return glm::perspective(fieldOfViewVertical, aspectRatio, k_nearPlaneMetres,
+                           k_farPlaneMetres);
 }
 
 double GraphicsEngineBase::getAspectRatio() const {

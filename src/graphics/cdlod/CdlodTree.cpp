@@ -90,23 +90,20 @@ glm::dvec3 CdlodTree::projectedPoint(const glm::dvec3& basePoint) const {
 double CdlodTree::distanceToNode(const CdlodPatchFrame& frame,
                                  const glm::dvec3& point) const {
     // A node is a patch of the sphere, so bound it with a sphere of its own:
-    // centred on the projected patch centre and reaching its projected corners.
-    // The corners are the points of a convex patch furthest from its centre, so
-    // this encloses the whole patch. An axis-aligned box fits a curved patch
-    // badly, which is what made it the wrong choice only while the body was flat.
+    // centred on the projected patch centre and reaching past its corners.
+    //
+    // The radius comes from the frame rather than the projected corners, since
+    // projecting a face onto the sphere never lengthens a distance inside it:
+    //
+    //    |proj(q) - centre| <= |q - m_centre| <= sqrt(2) * |m_uAxis|
+    //
+    // Loose only at the coarsest levels; a patch flat enough to matter meets it
+    // exactly. Overshooting only brings a split forward, so the one-level
+    // neighbour bound in CdlodConfig still comes out at sqrt(2).
     const glm::dvec3 centre{projectedPoint(frame.m_centre)};
+    const double boundingRadius{std::sqrt(2.0) * glm::length(frame.m_uAxis)};
 
-    double radiusSquared{0.0};
-    for (int cornerIndex{0}; cornerIndex < 4; ++cornerIndex) {
-        const double uSign{(cornerIndex % 2) == 0 ? -1.0 : 1.0};
-        const double vSign{(cornerIndex / 2) == 0 ? -1.0 : 1.0};
-        const glm::dvec3 corner{
-            frame.m_centre + frame.m_uAxis * uSign + frame.m_vAxis * vSign};
-        const glm::dvec3 toCorner{projectedPoint(corner) - centre};
-        radiusSquared = glm::max(radiusSquared, glm::dot(toCorner, toCorner));
-    }
-
-    return glm::max(0.0, glm::length(point - centre) - glm::sqrt(radiusSquared));
+    return glm::max(0.0, glm::length(point - centre) - boundingRadius);
 }
 
 void CdlodTree::updateAndSelect(const glm::dvec3& cameraBodyPosition,

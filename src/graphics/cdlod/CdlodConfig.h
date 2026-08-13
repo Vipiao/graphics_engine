@@ -21,12 +21,17 @@ struct CdlodConfig {
     //
     // It is an angular quantity, and the only one: a node that declines to split
     // subtends about 1 / m_lodRangeFactor radians whatever its level, so its
-    // quads subtend 1 / (m_lodRangeFactor * k_patchQuads). Independent of the
-    // body's radius and of how far away it is, which is what makes it the single
-    // place to set how fine the surface looks. In pixels, at a horizontal field
-    // of view f over a viewport w pixels wide:
+    // quads subtend 1 / (m_lodRangeFactor * patchQuads), where patchQuads is the
+    // grid size every body shares. Independent of the body's radius and of how
+    // far away it is, which is what makes it the single place to set how fine the
+    // surface looks. In pixels, at a horizontal field of view f over a viewport
+    // w pixels wide:
     //
-    //    quadPixels ~ w / (f * m_lodRangeFactor * k_patchQuads)
+    //    quadPixels ~ w / (f * m_lodRangeFactor * patchQuads)
+    //
+    // It also sets where morphing begins: cdlod_patch.glsl derives that from this
+    // rather than keeping a constant of its own, since the merge this decides has
+    // to happen after the morph it schedules.
     //
     // Must stay above sqrt(2). A node that declines to split is no further than
     // r/2 + diagonal from anything touching it, so a neighbour two levels finer

@@ -218,6 +218,11 @@ public:
     // Scoped to the CDLOD instances, unlike setTriangleRenderMode above.
     void setCdlodWireframe(bool wireframe);
     bool getCdlodWireframe() const;
+    // Quads along one patch edge, and so the triangles a selected patch costs.
+    // One decision for every CDLOD body, since they share one index buffer, and
+    // safe to change at any time. Must be even; throws if it cannot be used.
+    void setCdlodPatchQuads(int patchQuads);
+    int getCdlodPatchQuads() const;
 
     // Render parameter access
     std::pair<uint64_t, double> getRenderParameters() const { return {m_currentInterpolationTimeStep, m_interpolationTimeRemainder}; }
@@ -256,7 +261,10 @@ private:
 
     // Shadow parameters
     bool m_shadowsEnabled = true;
-    glm::dvec3 m_lightDirection = glm::normalize(glm::dvec3(1.0, -1.0, -1.0));
+    // The direction the light travels, not the direction toward it: the lighting
+    // stage negates it. +y puts the source below, lighting the face a body parked
+    // along +y turns toward the camera.
+    glm::dvec3 m_lightDirection = glm::normalize(glm::dvec3(1.0, 1.0, -1.0));
     
     // Helper method for shadow rendering
     void renderShadowPass();

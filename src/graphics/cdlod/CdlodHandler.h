@@ -202,6 +202,11 @@ public:
     void setWireframe(bool wireframe) { m_wireframe = wireframe; }
     bool getWireframe() const { return m_wireframe; }
 
+    // Quads along one patch edge, shared by every body since they are all drawn
+    // from one index buffer. See CdlodPatchGeometry::setPatchQuads.
+    void setPatchQuads(int patchQuads);
+    int getPatchQuads() const;
+
     std::pair<bool, std::string> reloadShaders();
 
 private:

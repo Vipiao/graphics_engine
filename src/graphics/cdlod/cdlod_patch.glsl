@@ -29,15 +29,21 @@ layout(std430, binding = 1) readonly buffer CdlodInstanceBuffer {
 };
 
 // Where in a leaf's distance band the morph begins, as a fraction of the band.
-// Later keeps full detail for longer but ramps more steeply; earlier is gentler
-// but leaves the surface softer than its level nominally promises.
+// Derived from the range factor rather than chosen, since a merge is seamless
+// only if the morph has finished when it fires: the merge tests the parent's
+// nearest point, the morph is per vertex, and the furthest vertex of a square
+// patch sits sqrt(2) edge lengths beyond that point. Requiring it to be at
+// morph 0 there gives
 //
-// Must not go below about 0.44. A merge is seamless only while the parent is
-// still at morph 0 as its children vanish, and the merge fires on the parent's
-// nearest point while the morph is per vertex: its furthest vertex sits at
-// 1.435x the split range, so a morph starting any earlier than that has already
-// begun when the children go, and the surface steps.
-const float k_morphStartFraction = 0.5;
+//    f * edge + sqrt(2) * edge <= f * edge * (1 + fraction)
+//
+// Below sqrt(2) / f the parent renders itself partly morphed the instant it takes
+// over from children that handed it an unmorphed mesh, and the surface steps
+// open. The band left to morph in is edge * (f - sqrt(2)), which is why
+// CdlodConfig floors f at sqrt(2).
+float cdlodMorphStartFraction(float lodRangeFactor) {
+   return sqrt(2.0) / lodRangeFactor;
+}
 
 // The patch grid both vertex stages walk. It lives here rather than in each leaf
 // shader because the depth stage has to morph a vertex to the exact same place
@@ -152,7 +158,8 @@ float cdlodMorphWeight(vec3 restPosition, float patchEdge, int patchLevel,
 
    float ownRange = instance.lodRangeFactor * patchEdge;
    float morphEnd = 2.0 * ownRange;
-   float morphStart = mix(ownRange, morphEnd, k_morphStartFraction);
+   float morphStart = mix(ownRange, morphEnd,
+                          cdlodMorphStartFraction(instance.lodRangeFactor));
    return clamp((distance(restPosition, instance.cameraBodyPosition.xyz) - morphStart) /
                 (morphEnd - morphStart), 0.0, 1.0);
 }

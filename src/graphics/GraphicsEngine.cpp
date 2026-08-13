@@ -400,6 +400,14 @@ bool GraphicsEngine::getCdlodWireframe() const {
     return m_cdlodHandler->getWireframe();
 }
 
+void GraphicsEngine::setCdlodPatchQuads(int patchQuads) {
+    m_cdlodHandler->setPatchQuads(patchQuads);
+}
+
+int GraphicsEngine::getCdlodPatchQuads() const {
+    return m_cdlodHandler->getPatchQuads();
+}
+
 int GraphicsEngine::loadModel(
     const std::string& modelPath,
     const std::string& colorTexturePath,

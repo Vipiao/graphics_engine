@@ -160,6 +160,14 @@ CdlodHandler::~CdlodHandler() {
     m_patchGeometry.reset();
 }
 
+void CdlodHandler::setPatchQuads(int patchQuads) {
+    m_patchGeometry->setPatchQuads(patchQuads);
+}
+
+int CdlodHandler::getPatchQuads() const {
+    return m_patchGeometry->getPatchQuads();
+}
+
 std::string CdlodHandler::buildStageSource(const char* stagePath,
                                            const std::string& snippetPath) {
     // Expands the patch include, which is where the marker lives, so every stage
@@ -394,7 +402,7 @@ void CdlodHandler::renderAllSurfaces(const FrameRenderParams& params, bool isGeo
 
         const GLint patchVerticesLoc{glGetUniformLocation(activeProgram, "u_patchVertices")};
         if (patchVerticesLoc != -1) {
-            glUniform1i(patchVerticesLoc, CdlodPatchGeometry::k_patchVertices);
+            glUniform1i(patchVerticesLoc, m_patchGeometry->getPatchVertices());
         }
         const GLint colorByLevelLoc{glGetUniformLocation(activeProgram, "u_colorByLevel")};
         if (colorByLevelLoc != -1) {
