@@ -11,7 +11,7 @@
 #include "../FrameRenderParams.h"
 #include "../Texture2D.h"
 #include "CdlodConfig.h"
-#include "CdlodCubeFaces.h"
+#include "CdlodPatchBounds.h"
 #include "CdlodTree.h"
 
 class SSBOManager;
@@ -28,10 +28,9 @@ struct CdlodSurface;
 struct CdlodInstanceData {
     glm::vec4 m_baseColor{};
     glm::vec4 m_cameraBodyPosition{};
-    float m_halfExtent{};
     float m_lodRangeFactor{};
     int32_t m_ssboIndex{-1};
-    int32_t m_padding{0};
+    int32_t m_padding[2]{};
 };
 static_assert(sizeof(CdlodInstanceData) == 48,
               "CdlodInstanceData must match the 48-byte std430 layout in cdlod_patch.glsl");
@@ -47,9 +46,11 @@ static_assert(sizeof(CdlodInstanceData) == 48,
  * instanced call.
  */
 struct CdlodInstance {
-    CdlodInstance(int ssboIndex, const CdlodConfig& config, CdlodSurface* surface)
+    CdlodInstance(int ssboIndex, const CdlodConfig& config,
+                  std::vector<CdlodPatchFrame> rootFrames,
+                  std::shared_ptr<const ICdlodPatchBounds> bounds, CdlodSurface* surface)
         : m_ssboIndex{ssboIndex}, m_config{config}, m_surface{surface},
-          m_tree{config, CdlodCubeFaces::cubeRootFrames(config.m_halfExtent)} {}
+          m_tree{config, std::move(rootFrames), std::move(bounds)} {}
 
     int m_ssboIndex{-1};
     CdlodConfig m_config{};
@@ -132,10 +133,11 @@ struct CdlodSurface {
 /**
  * @brief Renderer for continuous-distance level-of-detail bodies.
  *
- * An instance is a cube subdivided by a quadtree per face. Nothing here knows
- * what it represents; an asteroid, a planet and a debug cube are the same object
- * at this level, and what makes them differ is the surface injected into the
- * vertex stage.
+ * An instance is a set of caller-supplied patch frames, each the root of a
+ * quadtree. Nothing here knows what solid they came off or what surface they map
+ * to: an asteroid, a planet and a ring station are the same object at this level,
+ * and what makes them differ is the snippet injected into the vertex stage and
+ * the bounds that say where its patches land.
  *
  * There is no geometry level between the surface and the instance, unlike the
  * instanced-geometry renderers: a subdivided body has no mesh to share, since
@@ -163,13 +165,11 @@ public:
     CdlodHandler& operator=(const CdlodHandler&) = delete;
 
     // Builds the vertex programs from the patch scaffold with the given surface
-    // snippet injected. Empty snippetPath uses the built-in sphere.
-    std::weak_ptr<CdlodSurface> createSurface(const std::string& snippetPath = "");
+    // snippet injected. The snippet decides the body's shape, so there is no
+    // default: a body without one has nowhere to put its vertices.
+    std::weak_ptr<CdlodSurface> createSurface(const std::string& snippetPath);
     // Destroys the surface and every instance drawn with it.
     void removeSurface(std::weak_ptr<CdlodSurface> surface);
-    // The built-in sphere, for an instance that wants no particular shape. Like
-    // any other surface, it expires if it is removed.
-    std::weak_ptr<CdlodSurface> getDefaultSurface() const { return m_defaultSurface; }
 
     // Gives the surface's snippet something to sample or read, under a name the
     // snippet declares. Set or replace by name; both are ignored by a snippet
@@ -183,7 +183,11 @@ public:
     // The surface owns the instance; the caller holds a weak handle that expires
     // when it is removed, so a stale handle can be recognised rather than
     // silently naming someone else's body. Throws if the surface has expired.
+    // rootFrames are the quadtree's starting squares, in the body's own frame;
+    // bounds says where any frame derived from them renders.
     std::weak_ptr<CdlodInstance> createInstance(int ssboIndex, const CdlodConfig& config,
+                                                std::vector<CdlodPatchFrame> rootFrames,
+                                                std::shared_ptr<const ICdlodPatchBounds> bounds,
                                                 std::weak_ptr<CdlodSurface> surface);
     void removeInstance(std::weak_ptr<CdlodInstance> instance);
 
@@ -219,7 +223,6 @@ private:
     std::unique_ptr<CdlodPatchGeometry> m_patchGeometry;
     // The only owner of the surfaces, and the order they are drawn in.
     std::vector<std::shared_ptr<CdlodSurface>> m_surfaces;
-    std::weak_ptr<CdlodSurface> m_defaultSurface;
 
     bool m_wireframe{false};
 

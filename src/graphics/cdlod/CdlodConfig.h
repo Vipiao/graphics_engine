@@ -6,10 +6,9 @@
 // Creation parameters for one CDLOD body. Deliberately free of GL types so the
 // engine's public header can carry it without pulling in the renderer.
 struct CdlodConfig {
-    // The body's radius, in metres. The subdivision is a cube quadtree, but the
-    // vertex stage projects it onto the sphere of this radius, so the surface
-    // touches the cube only at the six face centres.
-    double m_halfExtent{100.0};
+    // No size here: a body's scale lives in the root frames the caller supplies,
+    // and where those frames render is its ICdlodPatchBounds' answer.
+
     // Surface albedo until a material is supplied.
     glm::dvec4 m_baseColor{0.55, 0.52, 0.48, 1.0};
 

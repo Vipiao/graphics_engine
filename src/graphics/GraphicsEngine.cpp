@@ -368,13 +368,11 @@ void GraphicsEngine::removeCdlodSurface(std::weak_ptr<CdlodSurface> surface) {
     m_cdlodHandler->removeSurface(surface);
 }
 
-std::weak_ptr<CdlodSurface> GraphicsEngine::getDefaultCdlodSurface() const {
-    return m_cdlodHandler->getDefaultSurface();
-}
-
 std::weak_ptr<CdlodInstance> GraphicsEngine::createCdlodInstance(
-    int ssboIndex, const CdlodConfig& config, std::weak_ptr<CdlodSurface> surface) {
-    return m_cdlodHandler->createInstance(ssboIndex, config, std::move(surface));
+    int ssboIndex, const CdlodConfig& config, std::vector<CdlodPatchFrame> rootFrames,
+    std::shared_ptr<const ICdlodPatchBounds> bounds, std::weak_ptr<CdlodSurface> surface) {
+    return m_cdlodHandler->createInstance(ssboIndex, config, std::move(rootFrames),
+                                          std::move(bounds), std::move(surface));
 }
 
 void GraphicsEngine::removeCdlodInstance(std::weak_ptr<CdlodInstance> instance) {

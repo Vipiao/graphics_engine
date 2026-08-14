@@ -19,8 +19,6 @@ constexpr const char* s_gbufferFragmentPath =
     ENGINE_ASSET_DIR "/src/graphics/cdlod/cdlod_gbuffer_fragment_shader.frag";
 constexpr const char* s_depthFragmentPath =
     ENGINE_ASSET_DIR "/src/graphics/shared_shaders/depth_fragment_shader.frag";
-constexpr const char* s_defaultSurfacePath =
-    ENGINE_ASSET_DIR "/src/graphics/cdlod/cdlod_default_surface.glsl";
 constexpr const char* s_surfaceMarker = "__CDLOD_SURFACE_BODY__";
 
 void spliceSurfaceBody(std::string& source, const std::string& body) {
@@ -62,10 +60,9 @@ glm::dvec3 cameraInBodySpace(const MeshTransform& transform,
 CdlodInstanceData makeInstanceData(const CdlodInstance& instance) {
     return CdlodInstanceData{glm::vec4{instance.m_config.m_baseColor},
                              glm::vec4{glm::vec3{instance.m_cameraBodyPosition}, 0.0f},
-                             static_cast<float>(instance.m_config.m_halfExtent),
                              static_cast<float>(instance.m_config.m_lodRangeFactor),
                              instance.m_ssboIndex,
-                             0};
+                             {0, 0}};
 }
 
 // Rewrites a whole buffer, growing its storage geometrically. Everything CDLOD
@@ -148,10 +145,6 @@ CdlodHandler::CdlodHandler(SSBOManager* ssboManager, TextureStore* textureStore)
     }
 
     m_patchGeometry = std::make_unique<CdlodPatchGeometry>();
-
-    // The built-in sphere, so an instance that asks for no particular shape
-    // still has programs to draw with.
-    m_defaultSurface = createSurface();
 }
 
 CdlodHandler::~CdlodHandler() {
@@ -173,9 +166,7 @@ std::string CdlodHandler::buildStageSource(const char* stagePath,
     // Expands the patch include, which is where the marker lives, so every stage
     // that includes it picks the snippet up without naming it.
     std::string source{ShaderProgram::loadTextFileFromPath(stagePath)};
-    const std::string surfacePath{snippetPath.empty() ? s_defaultSurfacePath : snippetPath};
-
-    spliceSurfaceBody(source, ShaderProgram::loadTextFileFromPath(surfacePath));
+    spliceSurfaceBody(source, ShaderProgram::loadTextFileFromPath(snippetPath));
     return source;
 }
 
@@ -274,14 +265,19 @@ void CdlodHandler::removeSurface(std::weak_ptr<CdlodSurface> surfaceWeak) {
 }
 
 std::weak_ptr<CdlodInstance> CdlodHandler::createInstance(
-    int ssboIndex, const CdlodConfig& config, std::weak_ptr<CdlodSurface> surfaceWeak) {
+    int ssboIndex, const CdlodConfig& config, std::vector<CdlodPatchFrame> rootFrames,
+    std::shared_ptr<const ICdlodPatchBounds> bounds,
+    std::weak_ptr<CdlodSurface> surfaceWeak) {
     const std::shared_ptr<CdlodSurface> surface{surfaceWeak.lock()};
     if (!surface) {
         throw std::runtime_error("CdlodHandler::createInstance: surface has expired");
     }
+    if (!bounds) {
+        throw std::runtime_error("CdlodHandler::createInstance: bounds cannot be null");
+    }
 
-    surface->m_instances.push_back(
-        std::make_shared<CdlodInstance>(ssboIndex, config, surface.get()));
+    surface->m_instances.push_back(std::make_shared<CdlodInstance>(
+        ssboIndex, config, std::move(rootFrames), std::move(bounds), surface.get()));
     return surface->m_instances.back();
 }
 

@@ -4,11 +4,13 @@
 #include <cmath>
 #include <utility>
 
-CdlodTree::CdlodTree(const CdlodConfig& config, std::vector<CdlodPatchFrame> rootFrames)
-    : m_config{config}, m_rootFrames{std::move(rootFrames)}, m_nodes(m_rootFrames.size()) {
+CdlodTree::CdlodTree(const CdlodConfig& config, std::vector<CdlodPatchFrame> rootFrames,
+                     std::shared_ptr<const ICdlodPatchBounds> bounds)
+    : m_config{config}, m_rootFrames{std::move(rootFrames)},
+      m_bounds{std::move(bounds)}, m_nodes(m_rootFrames.size()) {
     assert(!m_rootFrames.empty() &&
            "A tree with no roots selects nothing, and draws nothing, silently");
-    assert(m_config.m_halfExtent > 0.0 && "A body needs a radius to project its patches onto");
+    assert(m_bounds && "Without bounds a patch has no place, and no distance to measure");
     // The bound this rests on is derived in CdlodConfig: at or below sqrt(2) a
     // neighbour two levels finer becomes reachable and the cracks double.
     assert(m_config.m_lodRangeFactor > std::sqrt(2.0) &&
@@ -76,34 +78,14 @@ CdlodPatchFrame CdlodTree::childFrame(const CdlodPatchFrame& frame, int childInd
     return CdlodPatchFrame{frame.m_centre + uHalf * uSign + vHalf * vSign, uHalf, vHalf};
 }
 
-glm::dvec3 CdlodTree::projectedPoint(const glm::dvec3& basePoint) const {
-    // Projecting the body's centre has no answer, and normalizing it yields NaN
-    // rather than saying so. A single root centred on the origin would hit this.
-    assert(glm::dot(basePoint, basePoint) > 0.0 &&
-           "A patch may not reach the body's centre: it has no outward direction there");
-
-    // Mirrors cdlodPatchPoint in cdlod_patch.glsl, which projects the same frame
-    // the same way.
-    return glm::normalize(basePoint) * m_config.m_halfExtent;
-}
-
 double CdlodTree::distanceToNode(const CdlodPatchFrame& frame,
                                  const glm::dvec3& point) const {
-    // A node is a patch of the sphere, so bound it with a sphere of its own:
-    // centred on the projected patch centre and reaching past its corners.
-    //
-    // The radius comes from the frame rather than the projected corners, since
-    // projecting a face onto the sphere never lengthens a distance inside it:
-    //
-    //    |proj(q) - centre| <= |q - m_centre| <= sqrt(2) * |m_uAxis|
-    //
-    // Loose only at the coarsest levels; a patch flat enough to matter meets it
-    // exactly. Overshooting only brings a split forward, so the one-level
-    // neighbour bound in CdlodConfig still comes out at sqrt(2).
-    const glm::dvec3 centre{projectedPoint(frame.m_centre)};
-    const double boundingRadius{std::sqrt(2.0) * glm::length(frame.m_uAxis)};
+    // The bound contains the patch as drawn, so subtracting its radius gives a
+    // distance no point of it is nearer than -- which is what keeps neighbouring
+    // leaves within one level of each other.
+    const CdlodPatchBounds bounds{m_bounds->patchBounds(frame)};
 
-    return glm::max(0.0, glm::length(point - centre) - boundingRadius);
+    return glm::max(0.0, glm::length(point - bounds.m_centre) - bounds.m_radius);
 }
 
 void CdlodTree::updateAndSelect(const glm::dvec3& cameraBodyPosition,
@@ -133,11 +115,9 @@ void CdlodTree::visitNode(int32_t nodeIndex, const CdlodPatchFrame& frame, int d
            "Traversing a node that is not in the pool");
     assert(depth <= k_maxDepth && "Traversal went deeper than the depth limit allows");
 
-    // The distance at which this node's own resolution stops being enough,
-    // derived from its edge length so it halves in step with the nodes. Measured
-    // before projection, which runs about a quarter long against the arc the node
-    // actually covers; that splits marginally early, and the exact halving per
-    // level is what the one-level neighbour bound depends on.
+    // The distance at which this node's resolution stops being enough, taken from
+    // the frame rather than from where it renders: splitting halves the axes
+    // exactly, and that exact halving is what the one-level neighbour bound needs.
     const double nodeEdge{2.0 * glm::length(frame.m_uAxis)};
     const double splitRange{m_config.m_lodRangeFactor * nodeEdge};
     const double distance{distanceToNode(frame, cameraBodyPosition)};

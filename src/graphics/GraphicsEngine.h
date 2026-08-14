@@ -9,6 +9,9 @@
 #include "instancedGeometry/InstancedGeometry.h"
 // CdlodConfig.h carries the creation parameters of a CDLOD body by value.
 #include "cdlod/CdlodConfig.h"
+// CdlodPatchBounds.h carries the caller's shape hook and the patch frame type.
+#include "cdlod/CdlodPatchBounds.h"
+#include "cdlod/CdlodTree.h"
 // Texture2D.h provides TextureSpec, which callers fill in to hand a surface
 // generated image data.
 #include "Texture2D.h"
@@ -197,14 +200,17 @@ public:
     // gives the bare sphere. Instances sharing a surface share its programs.
     // There is no geometry level in between, unlike createInstanceGeometry: a
     // subdivided body has no mesh to share, only its own quadtree.
-    std::weak_ptr<CdlodSurface> createCdlodSurface(const std::string& snippetPath = "");
+    std::weak_ptr<CdlodSurface> createCdlodSurface(const std::string& snippetPath);
     // Drops the engine's reference; the surface lives on until its last instance
-    // goes. getDefaultCdlodSurface is the built-in sphere.
     void removeCdlodSurface(std::weak_ptr<CdlodSurface> surface);
-    std::weak_ptr<CdlodSurface> getDefaultCdlodSurface() const;
-    std::weak_ptr<CdlodInstance> createCdlodInstance(int ssboIndex,
-                                                     const CdlodConfig& config,
-                                                     std::weak_ptr<CdlodSurface> surface);
+    // rootFrames are the quadtree's starting squares, in the body's own frame;
+    // bounds says where any frame derived from them renders. With the snippet,
+    // the three are the body's shape -- the engine has no other notion of it.
+    std::weak_ptr<CdlodInstance> createCdlodInstance(
+        int ssboIndex, const CdlodConfig& config,
+        std::vector<CdlodPatchFrame> rootFrames,
+        std::shared_ptr<const ICdlodPatchBounds> bounds,
+        std::weak_ptr<CdlodSurface> surface);
     void removeCdlodInstance(std::weak_ptr<CdlodInstance> instance);
     // Data for the surface's snippet to read, under names the snippet declares.
     // Set or replace by name, and shared by every instance wearing the surface.

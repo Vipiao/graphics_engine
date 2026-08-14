@@ -2,22 +2,11 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 #include <glm/glm.hpp>
 #include "CdlodConfig.h"
-
-// Where one patch sits, in the body's own frame and in metres: a centre and two
-// half-edge axes, so the patch spans centre +- uAxis +- vAxis and its corners are
-// the four sign combinations. Splitting halves both axes and steps the centre by
-// half of each, which is all the tree needs to know about shape.
-//
-// The roots are supplied by the caller, so nothing below this line knows what
-// solid they came off.
-struct CdlodPatchFrame {
-    glm::dvec3 m_centre{0.0};
-    glm::dvec3 m_uAxis{0.0};
-    glm::dvec3 m_vAxis{0.0};
-};
+#include "CdlodPatchBounds.h"
 
 // One selected patch, as the vertex stage consumes it: the frame of the leaf it
 // came from at the precision the GPU reads it, plus its depth. A node is the
@@ -49,15 +38,16 @@ struct CdlodPatch {
  * to split is at least as far away as any node touching it, so its neighbours
  * decline too.
  *
- * Knows nothing about cubes, renderers or GL. Its one remaining assumption about
- * the shape being subdivided is that patch frames are projected onto a sphere,
- * which lives entirely in projectedPoint.
+ * Knows nothing about shapes, renderers or GL. Where a patch ends up is asked
+ * of the caller's ICdlodPatchBounds, so the only geometry here is the frames'
+ * own: square, and halved by splitting.
  */
 class CdlodTree {
 public:
     // One root per patch of the solid being subdivided, already in metres: six
     // for a cube, one for a flat patch. The tree neither knows nor cares which.
-    CdlodTree(const CdlodConfig& config, std::vector<CdlodPatchFrame> rootFrames);
+    CdlodTree(const CdlodConfig& config, std::vector<CdlodPatchFrame> rootFrames,
+              std::shared_ptr<const ICdlodPatchBounds> bounds);
 
     // Splits, merges, and appends one patch per resulting leaf. Appends rather
     // than clears, so the bodies sharing a shader can select into one buffer and
@@ -105,6 +95,9 @@ private:
     // The first m_rootFrames.size() pool entries are the roots, so a root's node
     // index is its position here.
     std::vector<CdlodPatchFrame> m_rootFrames;
+    // Held rather than borrowed: a tree outlives the call that built it, and a
+    // body whose bounds expired would silently stop subdividing.
+    std::shared_ptr<const ICdlodPatchBounds> m_bounds;
     std::vector<CdlodNode> m_nodes;
     // Start indices of free four-node blocks. Index-based and LIFO, so reuse
     // order is reproducible.
@@ -124,10 +117,6 @@ private:
     // stepped into one of the four corners.
     static CdlodPatchFrame childFrame(const CdlodPatchFrame& frame, int childIndex);
 
-    // A point of the base solid placed on the displaced surface, in body space.
-    // The only thing here that assumes a sphere.
-    glm::dvec3 projectedPoint(const glm::dvec3& basePoint) const;
-
-    // Shortest distance from a point to the node's bounds, in body space.
+    // Shortest distance from a point to the node as it renders, in body space.
     double distanceToNode(const CdlodPatchFrame& frame, const glm::dvec3& point) const;
 };

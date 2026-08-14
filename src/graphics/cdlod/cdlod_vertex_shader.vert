@@ -34,13 +34,10 @@ uniform mat4 projection;
 // patch was selected at, not just where its edges are.
 uniform bool u_colorByLevel;
 
-// The surface point this vertex sits over, before displacement. The fragment
-// stage renormalizes it and evaluates the surface normal there, so the shading
-// frequency follows the pixels rather than the patch's vertex spacing.
-out vec3 vert_spherePosition;
-// The radius to renormalize it to. Constant across a body, so the fragment
-// stage takes it from here rather than reading the instance buffer per pixel.
-flat out float vert_halfExtent;
+// The crude point this vertex was built from, so the fragment stage can ask the
+// surface for the normal there and shade per pixel rather than per vertex.
+// Interpolating it is exact: it is affine in the patch coordinate.
+out vec3 vert_crudePoint;
 // Body -> view rotation, for taking that normal into the space the G-buffer
 // stores. Constant across a body, so it is passed flat rather than interpolated.
 flat out mat3 vert_bodyToView;
@@ -54,15 +51,14 @@ void main() {
    uint deltaTime = u_time - meshData.time;
    float deltaTimeFloat = float(deltaTime) + u_timeRemainder;
 
-   // Step 1: patch vertex -> position on the body, in the body's own frame
+   // Step 1: patch vertex -> crude point -> position on the body, in its own frame
    vec2 patchUv = cdlodMorphedPatchUv(gl_VertexID, patchCentre, patchUAxis, patchVAxis,
                                       patchLevel, instance);
-   vec3 spherePosition = cdlodPatchPoint(patchUv, patchCentre, patchUAxis, patchVAxis,
-                                         instance.halfExtent);
+   vec3 crudePoint = cdlodCrudePoint(patchUv, patchCentre, patchUAxis, patchVAxis);
 
    // Position only. The normal belonging to this surface is evaluated per pixel
    // instead, so nothing here has to carry a shading frame.
-   vec3 localPosition = cdlodDisplacedPosition(spherePosition);
+   vec3 localPosition = cdlodSurfacePoint(crudePoint);
 
    // Step 2: body world transform with physics interpolation, camera-relative
    vec3 meshPositionL = dekkerSubtract(
@@ -78,8 +74,7 @@ void main() {
 
    vec4 viewPos = view * vec4(meshPositionL + worldTransformedPos, 1.0);
 
-   vert_spherePosition = spherePosition;
-   vert_halfExtent = instance.halfExtent;
+   vert_crudePoint = crudePoint;
    vert_bodyToView = mat3(view) * worldOrientation;
    vert_color = u_colorByLevel ? vec4(cdlodLevelColor(patchLevel), 1.0) : instance.baseColor;
    vert_emissiveScalar = meshData.emissiveScalar;

@@ -38,9 +38,8 @@ void main() {
    // be cast by a different surface than the one it falls on.
    vec2 patchUv = cdlodMorphedPatchUv(gl_VertexID, patchCentre, patchUAxis, patchVAxis,
                                       patchLevel, instance);
-   vec3 spherePosition = cdlodPatchPoint(patchUv, patchCentre, patchUAxis, patchVAxis,
-                                         instance.halfExtent);
-   vec3 localPosition = cdlodDisplacedPosition(spherePosition);
+   vec3 crudePoint = cdlodCrudePoint(patchUv, patchCentre, patchUAxis, patchVAxis);
+   vec3 localPosition = cdlodSurfacePoint(crudePoint);
 
    vec3 meshPositionL = dekkerSubtract(
       meshData.positionHigh.xyz, meshData.positionLow.xyz,

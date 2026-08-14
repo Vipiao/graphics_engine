@@ -1,8 +1,9 @@
 // cdlod_patch.glsl
 //
-// Shared patch construction for the CDLOD vertex stages. Turns a vertex of the
-// abstract patch grid, plus the per-instance node record, into a point on the
-// body's sphere, and hands that point to the injected surface body.
+// Shared patch construction for the CDLOD stages. Turns a vertex of the abstract
+// patch grid, plus the per-instance node record, into a point of the crude solid
+// the caller subdivided, and hands that point to the injected surface body. What
+// shape comes back is the surface body's business alone.
 //
 // Patch vertices carry no attributes: the grid coordinate is derived from
 // gl_VertexID, which under glDrawElements is the value fetched from the index
@@ -18,10 +19,9 @@
 struct CdlodInstanceData {
    vec4 baseColor;
    vec4 cameraBodyPosition;  // xyz: the camera in this body's own frame
-   float halfExtent;
    float lodRangeFactor;
    int ssboIndex;            // the body's world transform, in the shared SSBO
-   int padding;
+   ivec2 padding;
 };
 
 layout(std430, binding = 1) readonly buffer CdlodInstanceBuffer {
@@ -67,75 +67,31 @@ vec2 cdlodPatchGridUv(ivec2 grid, float morphK) {
    return (vec2(grid) - isOdd * morphK) / float(u_patchVertices - 1);
 }
 
-// The body's base shape: a patch coordinate placed in the node's own frame and
-// projected onto the sphere, in the body's own frame and in metres. The frame
-// arrives with the node record, so nothing here knows what solid the patch came
-// off -- only that the result is projected onto a sphere.
-//
-// CdlodTree::projectedPoint is the CPU twin of this and has to agree with it,
-// or selection measures distances to a surface that is not where it is drawn.
-// Everything the tree decides -- splits, merges, morph weights -- is measured
-// here, on the smooth sphere, never on the displaced surface. That is what lets
-// the surface body displace by any amount without disturbing the distance
-// bounds those decisions rest on.
-vec3 cdlodPatchPoint(vec2 patchUv, vec3 centre, vec3 uAxis, vec3 vAxis, float halfExtent) {
-   vec3 basePoint = centre + (2.0 * patchUv.x - 1.0) * uAxis
-                           + (2.0 * patchUv.y - 1.0) * vAxis;
-   return normalize(basePoint) * halfExtent;
+// A patch coordinate placed in the node's own frame: the crude point, in the
+// space the quadtree subdivides and before the surface has said anything about
+// where it goes. Affine in patchUv, which is what lets it be interpolated across
+// a triangle exactly.
+vec3 cdlodCrudePoint(vec2 patchUv, vec3 centre, vec3 uAxis, vec3 vAxis) {
+   return centre + (2.0 * patchUv.x - 1.0) * uAxis
+                 + (2.0 * patchUv.y - 1.0) * vAxis;
 }
 
-// The injected surface body defines a radial height field over the sphere:
+// The injected surface body turns a crude point into geometry:
 //
-//    float cdlodSurfaceElevation(vec3 spherePosition);
-//    vec3 cdlodSurfaceGradient(vec3 spherePosition);
+//    vec3 cdlodSurfacePoint(vec3 crudePoint);
+//    vec3 cdlodSurfaceNormal(vec3 crudePoint);
 //
-// spherePosition is a point on the body's sphere in the body's own frame, in
-// metres; the body is centred on the origin, so the outward direction there is
-// just its own normalized value. The first returns metres of displacement along
-// that direction, the second the gradient of that same height field.
+// crudePoint is a point of the solid the caller's root frames came off, in the
+// body's own frame and in metres; what that solid is and what surface it maps to
+// are the caller's entirely. Two functions rather than one because the vertex
+// stage places geometry and the fragment stage shades.
 //
-// A scalar height rather than a displaced position on purpose: it is what makes
-// "the normal is the gradient of the surface" a statement that can be true. A
-// body free to move a point sideways would have no such relationship, and its
-// two functions could disagree with nothing to catch it.
+// Both must be pure functions of crudePoint -- the level is deliberately not
+// passed. A patch morphs its shared edge onto a coarser neighbour's vertices, and
+// the seam closes only because both evaluate this at the same point.
 //
-// The two are separate because the stages that need them are -- the vertex
-// stage places geometry, the fragment stage shades -- and a stage compiles only
-// the one it calls. Assembling position and normal from the pair is done below
-// rather than here, so a surface writes only the height field and its
-// derivative and never repeats the geometry.
-//
-// Both must be pure functions of spherePosition. The level and size of the node
-// are deliberately not passed: a patch meeting a coarser neighbour morphs its
-// shared edge onto that neighbour's vertices, and the seam closes only because
-// both patches then evaluate this at the same point and get the same answer. A
-// body that could see which level it was being drawn at could reopen every seam
-// while looking perfectly reasonable.
+// What they draw must stay inside the ICdlodPatchBounds given to the tree.
 __CDLOD_SURFACE_BODY__
-
-// The surface point above a point on the sphere: displaced along the outward
-// direction by the height field.
-vec3 cdlodDisplacedPosition(vec3 spherePosition) {
-   vec3 sphereNormal = normalize(spherePosition);
-   return spherePosition + sphereNormal * cdlodSurfaceElevation(spherePosition);
-}
-
-// The unit normal of that displaced surface.
-//
-// Only the part of the gradient lying in the sphere's tangent plane tilts the
-// normal; the radial part moves the point in or out without turning it. The
-// 1 + height/radius term is the stretch of the tangent vectors as the surface
-// rises off the sphere, which is what keeps this exact rather than a small
-// angle approximation.
-vec3 cdlodDisplacedNormal(vec3 spherePosition) {
-   vec3 sphereNormal = normalize(spherePosition);
-   float height = cdlodSurfaceElevation(spherePosition);
-   vec3 gradient = cdlodSurfaceGradient(spherePosition);
-
-   vec3 tangentialGradient = gradient - sphereNormal * dot(sphereNormal, gradient);
-   float radius = length(spherePosition);
-   return normalize(sphereNormal - tangentialGradient / (1.0 + height / radius));
-}
 
 // How far this vertex has been pulled toward the parent patch.
 //
@@ -171,8 +127,8 @@ vec2 cdlodMorphedPatchUv(int vertexId, vec3 centre, vec3 uAxis, vec3 vAxis,
    ivec2 grid = cdlodPatchVertexGrid(vertexId);
    // Measured unmorphed: the morph follows from this distance, so the distance
    // cannot be allowed to follow from the morph.
-   vec3 restPosition = cdlodPatchPoint(cdlodPatchGridUv(grid, 0.0), centre, uAxis, vAxis,
-                                       instance.halfExtent);
+   vec3 restPosition = cdlodSurfacePoint(
+      cdlodCrudePoint(cdlodPatchGridUv(grid, 0.0), centre, uAxis, vAxis));
    float patchEdge = 2.0 * length(uAxis);
    return cdlodPatchGridUv(grid,
                            cdlodMorphWeight(restPosition, patchEdge, patchLevel, instance));
