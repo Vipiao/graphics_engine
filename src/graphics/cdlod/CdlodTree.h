@@ -8,19 +8,16 @@
 #include "CdlodConfig.h"
 #include "CdlodPatchBounds.h"
 
-// One selected patch, as the vertex stage consumes it: the frame of the leaf it
-// came from at the precision the GPU reads it, plus its depth. A node is the
-// tree's own entry and persists; a patch is the square it covers and is drawn.
+// One leaf of a finished traversal: the square it covers, and how deep it sits.
+// A node is the tree's own pool entry and persists between frames; a leaf is what
+// one traversal decided to draw.
 //
-// Purely per-patch. Everything true of the whole body -- its radius, its quality
-// knob, where its transform lives -- is reached through m_instanceIndex, which
-// the renderer stamps on; the tree leaves it alone.
-struct CdlodPatch {
-    glm::vec3 m_centre{0.0f};
-    glm::vec3 m_uAxis{0.0f};
-    glm::vec3 m_vAxis{0.0f};
-    int32_t m_level{0};           // 0 = root; depth in the quadtree
-    int32_t m_instanceIndex{-1};  // filled in by the renderer, not by the tree
+// Carries the frame whole, so a leaf can be handed straight back to the bounds it
+// was measured against, and in double, since narrowing it is the consumer's
+// choice rather than the tree's.
+struct CdlodLeaf {
+    CdlodPatchFrame m_frame{};
+    int m_level{0};  // 0 = root; depth in the quadtree
 };
 
 /**
@@ -38,9 +35,9 @@ struct CdlodPatch {
  * to split is at least as far away as any node touching it, so its neighbours
  * decline too.
  *
- * Knows nothing about shapes, renderers or GL. Where a patch ends up is asked
- * of the caller's ICdlodPatchBounds, so the only geometry here is the frames'
- * own: square, and halved by splitting.
+ * Knows nothing about shapes, renderers or GL. Where a leaf ends up is asked of
+ * the caller's ICdlodPatchBounds, so the only geometry here is the frames' own:
+ * square, and halved by splitting.
  */
 class CdlodTree {
 public:
@@ -49,13 +46,12 @@ public:
     CdlodTree(const CdlodConfig& config, std::vector<CdlodPatchFrame> rootFrames,
               std::shared_ptr<const ICdlodPatchBounds> bounds);
 
-    // Splits, merges, and appends one patch per resulting leaf. Appends rather
-    // than clears, so the bodies sharing a shader can select into one buffer and
-    // be drawn together. cameraBodyPosition is the camera in the
-    // body's own frame, at the same interpolated pose the vertex stage will draw
-    // the body at.
+    // Splits, merges, and appends what is left. Appends rather than clears, so
+    // the bodies sharing a shader can select into one buffer and be drawn
+    // together. cameraBodyPosition is the camera in the body's own frame, at the
+    // same interpolated pose the vertex stage will draw the body at.
     void updateAndSelect(const glm::dvec3& cameraBodyPosition,
-                         std::vector<CdlodPatch>& patches);
+                         std::vector<CdlodLeaf>& leaves);
 
 private:
     static constexpr int k_childCount{4};
@@ -74,9 +70,10 @@ private:
     // depth: a node stops splitting once the camera is further than
     // m_lodRangeFactor of its edge lengths away, so the camera's own height
     // above the surface bounds the depth on its own, and this only catches a
-    // camera that reaches the surface itself. A frame halved this many times
-    // reaches the resolution of the 32-bit CdlodPatch record, which sets it.
-    static constexpr int k_maxDepth{16};
+    // camera that reaches the surface itself. A guard on the recursion rather
+    // than a quality setting -- a root halved this many times is a 524288th of
+    // the body it came off.
+    static constexpr int k_maxDepth{19};
     // How far a root's two axes may differ in length, relative to the longer, and
     // still count as square. Only rounding is expected: a cube's faces match
     // exactly, and splitting halves both axes together.
@@ -102,7 +99,7 @@ private:
     // Start indices of free four-node blocks. Index-based and LIFO, so reuse
     // order is reproducible.
     std::vector<int32_t> m_freeBlocks;
-    // Patch count this traversal may not exceed. Set on entry to updateAndSelect
+    // Leaf count this traversal may not exceed. Set on entry to updateAndSelect
     // and read only while it runs.
     size_t m_selectionCeiling{0};
 
@@ -111,7 +108,7 @@ private:
 
     void visitNode(int32_t nodeIndex, const CdlodPatchFrame& frame, int depth,
                    const glm::dvec3& cameraBodyPosition,
-                   std::vector<CdlodPatch>& patches);
+                   std::vector<CdlodLeaf>& leaves);
 
     // The quarter of a frame a child occupies: both axes halved, the centre
     // stepped into one of the four corners.

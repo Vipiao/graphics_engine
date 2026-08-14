@@ -35,6 +35,20 @@ struct CdlodInstanceData {
 static_assert(sizeof(CdlodInstanceData) == 48,
               "CdlodInstanceData must match the 48-byte std430 layout in cdlod_patch.glsl");
 
+// One selected leaf as the vertex stages read it, fetched per instance at
+// divisor 1. The tree's leaves are in double; narrowing them is a decision about
+// what the attributes can carry, so it belongs here with the attribute
+// declarations that take their stride and offsets from this struct.
+struct CdlodPatch {
+    glm::vec3 m_centre{0.0f};
+    glm::vec3 m_uAxis{0.0f};
+    glm::vec3 m_vAxis{0.0f};
+    int32_t m_level{0};
+    // Position in the surface's m_instanceData, so a patch can reach everything
+    // true of the whole body it belongs to.
+    int32_t m_instanceIndex{-1};
+};
+
 /**
  * @brief One placed CDLOD body: its quadtree, and where it sits.
  *
@@ -123,10 +137,13 @@ struct CdlodSurface {
     size_t m_patchCapacity{0};
     size_t m_instanceDataCapacity{0};
 
-    // This frame's selection and the parameters it cites, both indexed within
-    // this surface: m_instanceData is indexed by position in m_instances, which
-    // is the index each selected patch carries.
+    // This frame's selection, as the trees produced it and as the GPU takes it.
+    // Every instance appends into the first; the second is the same leaves
+    // narrowed and stamped with which instance each came from. Kept across
+    // frames only so their storage is reused.
+    std::vector<CdlodLeaf> m_selectedLeaves;
     std::vector<CdlodPatch> m_selectedPatches;
+    // Indexed by position in m_instances, which is the index each patch carries.
     std::vector<CdlodInstanceData> m_instanceData;
 };
 

@@ -116,6 +116,19 @@ float cdlodMorphWeight(vec3 restPosition, float patchEdge, int patchLevel,
    float morphEnd = 2.0 * ownRange;
    float morphStart = mix(ownRange, morphEnd,
                           cdlodMorphStartFraction(instance.lodRangeFactor));
+
+   // Both ends pulled in by this much of the band. The two above are derived for
+   // a patch lying flat in its own frame, and a body's bounds are free to be
+   // looser than that -- terrain lifts a patch off the shape they were measured
+   // on, so it reaches a little further than the split was decided for. Spent at
+   // both ends because either one running short reopens a seam: the coarse side
+   // must not have begun morphing where a finer neighbour meets it, and the fine
+   // side must have finished.
+   const float k_bandMargin = 0.2;
+   float bandEnd = morphEnd;
+   morphEnd = mix(morphEnd, morphStart, k_bandMargin);
+   morphStart = mix(morphStart, bandEnd, k_bandMargin);
+
    return clamp((distance(restPosition, instance.cameraBodyPosition.xyz) - morphStart) /
                 (morphEnd - morphStart), 0.0, 1.0);
 }

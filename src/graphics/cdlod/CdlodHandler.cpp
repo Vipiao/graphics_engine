@@ -57,6 +57,14 @@ glm::dvec3 cameraInBodySpace(const MeshTransform& transform,
     return (rotated + transform.centerOfRotation) / transform.scale;
 }
 
+// A tree's leaf as the vertex stages read it. The narrowing to float happens
+// here rather than in the tree, which works in double throughout and has no
+// business knowing what an attribute can hold.
+CdlodPatch makePatch(const CdlodLeaf& leaf, int32_t instanceIndex) {
+    return CdlodPatch{glm::vec3{leaf.m_frame.m_centre}, glm::vec3{leaf.m_frame.m_uAxis},
+                      glm::vec3{leaf.m_frame.m_vAxis}, leaf.m_level, instanceIndex};
+}
+
 CdlodInstanceData makeInstanceData(const CdlodInstance& instance) {
     return CdlodInstanceData{glm::vec4{instance.m_config.m_baseColor},
                              glm::vec4{glm::vec3{instance.m_cameraBodyPosition}, 0.0f},
@@ -305,6 +313,7 @@ void CdlodHandler::update(const FrameRenderParams& params) {
 
 void CdlodHandler::selectVisibleNodes(CdlodSurface& surface,
                                       const FrameRenderParams& params) {
+    surface.m_selectedLeaves.clear();
     surface.m_selectedPatches.clear();
     surface.m_instanceData.assign(surface.m_instances.size(), CdlodInstanceData{});
 
@@ -318,14 +327,14 @@ void CdlodHandler::selectVisibleNodes(CdlodSurface& surface,
             m_ssboManager->getMeshTransform(instance.m_ssboIndex)};
         instance.m_cameraBodyPosition = cameraInBodySpace(transform, params);
 
-        // The tree describes patches, not who owns them, so the patches it just
+        // The tree describes leaves, not who owns them, so the ones it just
         // appended are stamped here with where this instance's parameters sit.
-        const size_t firstPatch{surface.m_selectedPatches.size()};
+        const size_t firstLeaf{surface.m_selectedLeaves.size()};
         instance.m_tree.updateAndSelect(instance.m_cameraBodyPosition,
-                                        surface.m_selectedPatches);
-        for (size_t patch{firstPatch}; patch < surface.m_selectedPatches.size(); ++patch) {
-            surface.m_selectedPatches[patch].m_instanceIndex =
-                static_cast<int32_t>(instanceIndex);
+                                        surface.m_selectedLeaves);
+        for (size_t leaf{firstLeaf}; leaf < surface.m_selectedLeaves.size(); ++leaf) {
+            surface.m_selectedPatches.push_back(makePatch(
+                surface.m_selectedLeaves[leaf], static_cast<int32_t>(instanceIndex)));
         }
 
         surface.m_instanceData[instanceIndex] = makeInstanceData(instance);

@@ -89,7 +89,7 @@ double CdlodTree::distanceToNode(const CdlodPatchFrame& frame,
 }
 
 void CdlodTree::updateAndSelect(const glm::dvec3& cameraBodyPosition,
-                                std::vector<CdlodPatch>& patches) {
+                                std::vector<CdlodLeaf>& leaves) {
     // Every split test compares against this, and every comparison with a NaN is
     // false, so a non-finite camera does not fail: it quietly holds the whole body
     // at its roots. Caught here, at the boundary, rather than at the symptom.
@@ -99,18 +99,18 @@ void CdlodTree::updateAndSelect(const glm::dvec3& cameraBodyPosition,
 
     // Counted from where this body's own selection starts, so sharing the buffer
     // with other bodies does not spend their nodes out of this body's budget.
-    m_selectionCeiling = patches.size() + k_maxSelectedNodes;
+    m_selectionCeiling = leaves.size() + k_maxSelectedNodes;
 
     for (size_t rootIndex{0}; rootIndex < m_rootFrames.size(); ++rootIndex) {
         // A root's node index is its position in m_rootFrames; see m_nodes.
         visitNode(static_cast<int32_t>(rootIndex), m_rootFrames[rootIndex], 0,
-                  cameraBodyPosition, patches);
+                  cameraBodyPosition, leaves);
     }
 }
 
 void CdlodTree::visitNode(int32_t nodeIndex, const CdlodPatchFrame& frame, int depth,
                           const glm::dvec3& cameraBodyPosition,
-                          std::vector<CdlodPatch>& patches) {
+                          std::vector<CdlodLeaf>& leaves) {
     assert(nodeIndex >= 0 && static_cast<size_t>(nodeIndex) < m_nodes.size() &&
            "Traversing a node that is not in the pool");
     assert(depth <= k_maxDepth && "Traversal went deeper than the depth limit allows");
@@ -138,7 +138,7 @@ void CdlodTree::visitNode(int32_t nodeIndex, const CdlodPatchFrame& frame, int d
         freeSubtree(children);
         hasChildren = false;
     } else if (!hasChildren && wantsChildren &&
-               patches.size() + k_childCount <= m_selectionCeiling) {
+               leaves.size() + k_childCount <= m_selectionCeiling) {
         // Running out of budget only blocks new splits. It never forces a merge,
         // which would free a subtree just to rebuild it on the next frame, and it
         // never stops a leaf being emitted -- so the selection can pass the
@@ -149,14 +149,13 @@ void CdlodTree::visitNode(int32_t nodeIndex, const CdlodPatchFrame& frame, int d
     }
 
     if (!hasChildren) {
-        patches.push_back(CdlodPatch{glm::vec3{frame.m_centre}, glm::vec3{frame.m_uAxis},
-                                     glm::vec3{frame.m_vAxis}, depth, -1});
+        leaves.push_back(CdlodLeaf{frame, depth});
         return;
     }
 
     const int32_t firstChild{m_nodes[nodeIndex].m_firstChild};
     for (int childIndex{0}; childIndex < k_childCount; ++childIndex) {
         visitNode(firstChild + childIndex, childFrame(frame, childIndex), depth + 1,
-                  cameraBodyPosition, patches);
+                  cameraBodyPosition, leaves);
     }
 }
