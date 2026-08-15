@@ -11,6 +11,15 @@
 // rather than a constant here, so CdlodPatchGeometry::k_patchVertices stays the
 // single place it is decided -- a copy in this file could drift out of step with
 // the index buffer and silently fold the patch onto itself.
+//
+// A vertex leaves here as an offset from the camera, built in the wide float of
+// shared_shaders/dekker_arithmetic.glsl. A planet's own frame puts its points
+// 6.4e6 metres out, where an ordinary float's spacing is half a metre;
+// subtracting the camera first leaves the vertex's own distance, where the same
+// relative error is a fraction of a pixel. The body's world position never
+// appears -- it is what cancels when the camera is written in the body's frame.
+
+#include "../shared_shaders/dekker_arithmetic.glsl"
 
 // Everything true of a whole body, as CdlodHandler uploads it. Mirrors
 // CdlodHandler::CdlodInstanceData, which the static_assert there pins to this
@@ -18,7 +27,16 @@
 // sharing a surface can be drawn in one instanced call.
 struct CdlodInstanceData {
    vec4 baseColor;
-   vec4 cameraBodyPosition;  // xyz: the camera in this body's own frame
+   // The camera in this body's own frame, Dekker split: body-sized, and the term
+   // every vertex is measured against.
+   vec4 cameraBodyPositionHigh;
+   vec4 cameraBodyPositionLow;
+   // Body -> world rotation at this frame's pose, built on the CPU. The camera
+   // above was placed by inverting exactly this matrix, so applying it undoes
+   // that placement exactly. Rebuilding it here would agree only to a part in ten
+   // million, which against the camera's distance from a planet's centre is most
+   // of a metre of rigid slide, redrawn every frame the body turns.
+   mat3 bodyRotation;
    float lodRangeFactor;
    int ssboIndex;            // the body's world transform, in the shared SSBO
    ivec2 padding;
@@ -51,11 +69,6 @@ float cdlodMorphStartFraction(float lodRangeFactor) {
 // disagree with the surface casting it.
 uniform int u_patchVertices;
 
-// Grid coordinate of this vertex within the patch, in whole vertices.
-ivec2 cdlodPatchVertexGrid(int vertexId) {
-   return ivec2(vertexId % u_patchVertices, vertexId / u_patchVertices);
-}
-
 // The patch's [0, 1] coordinate, with odd-indexed vertices -- exactly the ones
 // the parent patch does not have -- slid onto their even neighbour as morphK
 // reaches 1. At 1 the odd vertices coincide with the even ones, the triangles
@@ -71,20 +84,33 @@ vec2 cdlodPatchGridUv(ivec2 grid, float morphK) {
 // space the quadtree subdivides and before the surface has said anything about
 // where it goes. Affine in patchUv, which is what lets it be interpolated across
 // a triangle exactly.
-vec3 cdlodCrudePoint(vec2 patchUv, vec3 centre, vec3 uAxis, vec3 vAxis) {
-   return centre + (2.0 * patchUv.x - 1.0) * uAxis
-                 + (2.0 * patchUv.y - 1.0) * vAxis;
+//
+// Only the centre is wide. The axes are half a patch edge, and the tree keeps a
+// patch within twice its own range, so they scale with distance and their last
+// bits are a fixed fraction of a pixel. The centre stays body-sized however small
+// the patch gets.
+Df3 cdlodCrudePoint(vec2 patchUv, Df3 centre, vec3 uAxis, vec3 vAxis) {
+   vec3 offset = (2.0 * patchUv.x - 1.0) * uAxis
+               + (2.0 * patchUv.y - 1.0) * vAxis;
+   return df3AddVec(centre, offset);
 }
 
 // The injected surface body turns a crude point into geometry:
 //
-//    vec3 cdlodSurfacePoint(vec3 crudePoint);
+//    Df3  cdlodSurfacePoint(Df3 crudePoint);
 //    vec3 cdlodSurfaceNormal(vec3 crudePoint);
 //
 // crudePoint is a point of the solid the caller's root frames came off, in the
 // body's own frame and in metres; what that solid is and what surface it maps to
 // are the caller's entirely. Two functions rather than one because the vertex
-// stage places geometry and the fragment stage shades.
+// stage places geometry and the fragment stage shades, which is also why they
+// differ in width: a position is body-sized, a normal is only a direction.
+//
+// Df3 and the arithmetic on it are already in scope here, so the body uses them
+// without naming a path: it is spliced in below the include above, and a snippet
+// lives outside this repository with no relative path that would reach the file.
+// It is src/graphics/shared_shaders/dekker_arithmetic.glsl in the graphics
+// engine, for a snippet author who wants to read what is available.
 //
 // Both must be pure functions of crudePoint -- the level is deliberately not
 // passed. A patch morphs its shared edge onto a coarser neighbour's vertices, and
@@ -108,14 +134,13 @@ __CDLOD_SURFACE_BODY__
 // coarser neighbour on one edge must be fully morphed there while still showing
 // detail on the edge facing the camera, and one value per patch would instead
 // make same-level neighbours disagree along their shared edge.
-float cdlodMorphWeight(vec3 restPosition, float patchEdge, int patchLevel,
-                       CdlodInstanceData instance) {
+float cdlodMorphWeight(vec3 restOffset, float patchEdge, int patchLevel,
+                       float lodRangeFactor) {
    if (patchLevel == 0) return 0.0;  // a root has no parent to merge into
 
-   float ownRange = instance.lodRangeFactor * patchEdge;
+   float ownRange = lodRangeFactor * patchEdge;
    float morphEnd = 2.0 * ownRange;
-   float morphStart = mix(ownRange, morphEnd,
-                          cdlodMorphStartFraction(instance.lodRangeFactor));
+   float morphStart = mix(ownRange, morphEnd, cdlodMorphStartFraction(lodRangeFactor));
 
    // Both ends pulled in by this much of the band. The two above are derived for
    // a patch lying flat in its own frame, and a body's bounds are free to be
@@ -129,22 +154,48 @@ float cdlodMorphWeight(vec3 restPosition, float patchEdge, int patchLevel,
    morphEnd = mix(morphEnd, morphStart, k_bandMargin);
    morphStart = mix(morphStart, bandEnd, k_bandMargin);
 
-   return clamp((distance(restPosition, instance.cameraBodyPosition.xyz) - morphStart) /
-                (morphEnd - morphStart), 0.0, 1.0);
+   return clamp((length(restOffset) - morphStart) / (morphEnd - morphStart), 0.0, 1.0);
 }
 
-// The patch coordinate this vertex actually renders at. Both vertex stages go
-// through here, so the depth pass cannot morph differently from the G-buffer one.
-vec2 cdlodMorphedPatchUv(int vertexId, vec3 centre, vec3 uAxis, vec3 vAxis,
-                         int patchLevel, CdlodInstanceData instance) {
-   ivec2 grid = cdlodPatchVertexGrid(vertexId);
-   // Measured unmorphed: the morph follows from this distance, so the distance
-   // cannot be allowed to follow from the morph.
-   vec3 restPosition = cdlodSurfacePoint(
-      cdlodCrudePoint(cdlodPatchGridUv(grid, 0.0), centre, uAxis, vAxis));
+// The vertex both stages draw, as an offset from the camera: its length is how
+// far away the vertex is, so the float operations after it cost a fixed fraction
+// of what it subtends. crudePoint comes back narrowed for the shading stage,
+// which a normal tolerates and a position does not.
+//
+// Shared so the depth pass cannot place a vertex anywhere the G-buffer pass does
+// not. The surface is evaluated twice: unmorphed to find how far this vertex is,
+// then at the coordinate that distance chose -- the morph follows from the
+// distance, so the distance cannot follow from the morph.
+vec3 cdlodBuildVertex(int vertexId, Df3 centre, vec3 uAxis, vec3 vAxis,
+                      int patchLevel, CdlodInstanceData instance, out vec3 crudePoint) {
+   // Already a high and a low part in the buffer, so it is the wide float itself
+   // rather than something to be assembled into one.
+   Df3 cameraBodyPosition = Df3(instance.cameraBodyPositionHigh.xyz,
+                                instance.cameraBodyPositionLow.xyz);
+   // Grid coordinate of this vertex within the patch, in whole vertices.
+   ivec2 grid = ivec2(vertexId % u_patchVertices, vertexId / u_patchVertices);
+
+   Df3 restCrude = cdlodCrudePoint(cdlodPatchGridUv(grid, 0.0), centre, uAxis, vAxis);
+   vec3 restOffset = df3ToVec(df3Sub(cdlodSurfacePoint(restCrude), cameraBodyPosition));
+
    float patchEdge = 2.0 * length(uAxis);
-   return cdlodPatchGridUv(grid,
-                           cdlodMorphWeight(restPosition, patchEdge, patchLevel, instance));
+   float morphK =
+      cdlodMorphWeight(restOffset, patchEdge, patchLevel, instance.lodRangeFactor);
+
+   // At zero the morphed coordinate is the rest coordinate down to the bit, so
+   // asking the surface again would return what it just returned. The band is a
+   // narrow part of the range a leaf lives in, so most patches are below it
+   // entirely and take this together rather than vertex by vertex.
+   if (morphK == 0.0) {
+      crudePoint = df3ToVec(restCrude);
+      return restOffset;
+   }
+
+   Df3 morphedCrude =
+      cdlodCrudePoint(cdlodPatchGridUv(grid, morphK), centre, uAxis, vAxis);
+
+   crudePoint = df3ToVec(morphedCrude);
+   return df3ToVec(df3Sub(cdlodSurfacePoint(morphedCrude), cameraBodyPosition));
 }
 
 // Distinct hue per quadtree level, for the debug view. Reading the tree's state

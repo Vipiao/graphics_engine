@@ -27,26 +27,53 @@ struct CdlodSurface;
 // what the caller wrote, this is what one frame needs.
 struct CdlodInstanceData {
     glm::vec4 m_baseColor{};
-    glm::vec4 m_cameraBodyPosition{};
+    // The camera in the body's frame, split so a float pair carries it: it is
+    // body-sized, and the vertex stage measures every vertex against it.
+    glm::vec4 m_cameraBodyPositionHigh{};
+    glm::vec4 m_cameraBodyPositionLow{};
+    // Body -> world rotation, in the std430 column padding a mat3 takes. Sent
+    // rather than rebuilt on the GPU because the camera above is its inverse
+    // applied to the eye, and the two have to be exact inverses for the body's
+    // world position to cancel rather than nearly cancel.
+    glm::mat3x4 m_bodyRotation{1.0f};
     float m_lodRangeFactor{};
     int32_t m_ssboIndex{-1};
     int32_t m_padding[2]{};
 };
-static_assert(sizeof(CdlodInstanceData) == 48,
-              "CdlodInstanceData must match the 48-byte std430 layout in cdlod_patch.glsl");
+static_assert(sizeof(CdlodInstanceData) == 112,
+              "CdlodInstanceData must match the 112-byte std430 layout in cdlod_patch.glsl");
 
 // One selected leaf as the vertex stages read it, fetched per instance at
 // divisor 1. The tree's leaves are in double; narrowing them is a decision about
 // what the attributes can carry, so it belongs here with the attribute
 // declarations that take their stride and offsets from this struct.
+//
+// The centre is split across two floats rather than rounded into one. It is the
+// only body-sized term a patch carries -- the axes are half a patch edge, which
+// shrinks with the patch -- so it is the only one whose last bits would be
+// metres on the ground.
 struct CdlodPatch {
-    glm::vec3 m_centre{0.0f};
+    glm::vec3 m_centreHigh{0.0f};
+    glm::vec3 m_centreLow{0.0f};
     glm::vec3 m_uAxis{0.0f};
     glm::vec3 m_vAxis{0.0f};
     int32_t m_level{0};
     // Position in the surface's m_instanceData, so a patch can reach everything
     // true of the whole body it belongs to.
     int32_t m_instanceIndex{-1};
+};
+
+// Where a body stands this frame, as both the tree and the vertex stage need it.
+//
+// The rotation is held at the width it will be uploaded at, and the camera is
+// placed by inverting that narrowed rotation rather than the exact one. The
+// vertex stage undoes the placement with the same matrix, so what it undoes is
+// what was done: the body's world position drops out exactly instead of leaving
+// a part in ten million of the camera's distance from the body's centre, which
+// on a planet is most of a metre and moves whenever the body turns.
+struct CdlodBodyPose {
+    glm::dmat3 m_bodyRotation{1.0};
+    glm::dvec3 m_cameraBodyPosition{0.0};
 };
 
 /**
@@ -72,10 +99,11 @@ struct CdlodInstance {
     // outlives it. Owning it would be a cycle, and nothing would ever be freed.
     CdlodSurface* m_surface{nullptr};
     CdlodTree m_tree;
-    // The camera this frame's selection was made against. The vertex stage
-    // morphs against the same value, so the morph cannot complete at a different
-    // distance than the one the merge was decided at.
-    glm::dvec3 m_cameraBodyPosition{0.0};
+    // The pose this frame's selection was made against. The vertex stage morphs
+    // against the same camera, so the morph cannot complete at a different
+    // distance than the one the merge was decided at, and turns the vertex by
+    // the same rotation the camera was placed with.
+    CdlodBodyPose m_pose{};
 };
 
 // A texture the snippet samples, and the sampler it reads it through. The unit

@@ -11,19 +11,15 @@ layout(std430, binding = 0) buffer MeshDataBuffer {
 // No per-vertex attributes: the patch grid comes from gl_VertexID.
 // Per-node attributes (from the shared instance VBO). Locations start at 4,
 // leaving 0..3 free so the layout stays readable against the instanced-geometry
-// shaders. Location 8 carries the CDLOD instance rather than the SSBO index
-// those shaders have there: everything true of the whole body, that index
-// included, is reached through it.
-layout (location = 4) in vec3 patchCentre;
-layout (location = 5) in vec3 patchUAxis;
-layout (location = 6) in vec3 patchVAxis;
-layout (location = 7) in int patchLevel;
-layout (location = 8) in int instanceIndex;
-
-uniform uint u_time;
-uniform float u_timeRemainder;
-uniform vec3 u_cameraPositionHigh;
-uniform vec3 u_cameraPositionLow;
+// shaders. The centre arrives Dekker split, being the one body-sized term a patch
+// carries. Location 9 carries the CDLOD instance rather than the SSBO index those
+// shaders have there: everything true of the body is reached through it.
+layout (location = 4) in vec3 patchCentreHigh;
+layout (location = 5) in vec3 patchCentreLow;
+layout (location = 6) in vec3 patchUAxis;
+layout (location = 7) in vec3 patchVAxis;
+layout (location = 8) in int patchLevel;
+layout (location = 9) in int instanceIndex;
 
 uniform mat4 view;
 uniform mat4 projection;
@@ -48,36 +44,26 @@ void main() {
    CdlodInstanceData instance = cdlodInstanceBuffer[instanceIndex];
    MeshData meshData = meshDataBuffer[instance.ssboIndex];
 
-   uint deltaTime = u_time - meshData.time;
-   float deltaTimeFloat = float(deltaTime) + u_timeRemainder;
+   // Patch vertex -> crude point -> the surface, already relative to the camera.
+   vec3 crudePoint;
+   vec3 cameraOffset = cdlodBuildVertex(
+      gl_VertexID, Df3(patchCentreHigh, patchCentreLow),
+      patchUAxis, patchVAxis, patchLevel, instance, crudePoint);
 
-   // Step 1: patch vertex -> crude point -> position on the body, in its own frame
-   vec2 patchUv = cdlodMorphedPatchUv(gl_VertexID, patchCentre, patchUAxis, patchVAxis,
-                                      patchLevel, instance);
-   vec3 crudePoint = cdlodCrudePoint(patchUv, patchCentre, patchUAxis, patchVAxis);
-
-   // Position only. The normal belonging to this surface is evaluated per pixel
-   // instead, so nothing here has to carry a shading frame.
-   vec3 localPosition = cdlodSurfacePoint(crudePoint);
-
-   // Step 2: body world transform with physics interpolation, camera-relative
-   vec3 meshPositionL = dekkerSubtract(
-      meshData.positionHigh.xyz, meshData.positionLow.xyz,
-      u_cameraPositionHigh, u_cameraPositionLow
-   );
-   meshPositionL += meshData.velocity.xyz * deltaTimeFloat;
-
-   mat3 worldOrientation =
-      calculatePhysicsOrientation(meshData.orientation, meshData.angVel, deltaTimeFloat);
-   vec3 worldTransformedPos = applyRotationTransform(
-      worldOrientation, localPosition * meshData.scale.xyz, meshData.centerOfRotation.xyz);
-
-   vec4 viewPos = view * vec4(meshPositionL + worldTransformedPos, 1.0);
+   // The pose acts on that offset rather than on a body-frame position, so its
+   // last bits cost a fraction of the vertex's distance instead of half a metre
+   // of planet. The world position and centre of rotation cancel: the camera was
+   // placed by inverting this very rotation, and putting it back leaves the
+   // eye-to-vertex vector the view matrix wants.
+   //
+   // Interpolated on the CPU, unlike the meshes sharing this SSBO: selection
+   // already builds this pose there, and a second answer could disagree.
+   vec3 worldOffset = instance.bodyRotation * (cameraOffset * meshData.scale.xyz);
 
    vert_crudePoint = crudePoint;
-   vert_bodyToView = mat3(view) * worldOrientation;
+   vert_bodyToView = mat3(view) * instance.bodyRotation;
    vert_color = u_colorByLevel ? vec4(cdlodLevelColor(patchLevel), 1.0) : instance.baseColor;
    vert_emissiveScalar = meshData.emissiveScalar;
 
-   gl_Position = projection * viewPos;
+   gl_Position = projection * view * vec4(worldOffset, 1.0);
 }

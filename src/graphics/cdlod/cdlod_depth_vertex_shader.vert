@@ -10,16 +10,12 @@ layout(std430, binding = 0) buffer MeshDataBuffer {
 
 // Per-node attributes; the layout is the G-buffer stage's, since both are drawn
 // from the same instance buffer. The depth pass needs nothing but the position.
-layout (location = 4) in vec3 patchCentre;
-layout (location = 5) in vec3 patchUAxis;
-layout (location = 6) in vec3 patchVAxis;
-layout (location = 7) in int patchLevel;
-layout (location = 8) in int instanceIndex;
-
-uniform uint u_time;
-uniform float u_timeRemainder;
-uniform vec3 u_cameraPositionHigh;
-uniform vec3 u_cameraPositionLow;
+layout (location = 4) in vec3 patchCentreHigh;
+layout (location = 5) in vec3 patchCentreLow;
+layout (location = 6) in vec3 patchUAxis;
+layout (location = 7) in vec3 patchVAxis;
+layout (location = 8) in int patchLevel;
+layout (location = 9) in int instanceIndex;
 
 uniform mat4 view;
 uniform mat4 projection;
@@ -31,26 +27,15 @@ void main() {
    CdlodInstanceData instance = cdlodInstanceBuffer[instanceIndex];
    MeshData meshData = meshDataBuffer[instance.ssboIndex];
 
-   uint deltaTime = u_time - meshData.time;
-   float deltaTimeFloat = float(deltaTime) + u_timeRemainder;
-
    // The same displacement the G-buffer stage applies, or the shadow map would
-   // be cast by a different surface than the one it falls on.
-   vec2 patchUv = cdlodMorphedPatchUv(gl_VertexID, patchCentre, patchUAxis, patchVAxis,
-                                      patchLevel, instance);
-   vec3 crudePoint = cdlodCrudePoint(patchUv, patchCentre, patchUAxis, patchVAxis);
-   vec3 localPosition = cdlodSurfacePoint(crudePoint);
+   // be cast by a different surface than the one it falls on. Both passes are
+   // handed the same camera, so both offsets are measured from the same point.
+   vec3 crudePoint;  // the shading stage's, and nothing this pass shades
+   vec3 cameraOffset = cdlodBuildVertex(
+      gl_VertexID, Df3(patchCentreHigh, patchCentreLow),
+      patchUAxis, patchVAxis, patchLevel, instance, crudePoint);
 
-   vec3 meshPositionL = dekkerSubtract(
-      meshData.positionHigh.xyz, meshData.positionLow.xyz,
-      u_cameraPositionHigh, u_cameraPositionLow
-   );
-   meshPositionL += meshData.velocity.xyz * deltaTimeFloat;
+   vec3 worldOffset = instance.bodyRotation * (cameraOffset * meshData.scale.xyz);
 
-   mat3 worldOrientation =
-      calculatePhysicsOrientation(meshData.orientation, meshData.angVel, deltaTimeFloat);
-   vec3 worldTransformedPos = applyRotationTransform(
-      worldOrientation, localPosition * meshData.scale.xyz, meshData.centerOfRotation.xyz);
-
-   gl_Position = projection * view * vec4(meshPositionL + worldTransformedPos, 1.0);
+   gl_Position = projection * view * vec4(worldOffset, 1.0);
 }

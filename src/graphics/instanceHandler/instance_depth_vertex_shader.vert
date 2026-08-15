@@ -1,5 +1,6 @@
 #version 460 core
 
+#include "../shared_shaders/dekker_arithmetic.glsl"
 #include "../shared_shaders/mesh_transform.glsl"
 
 layout(std430, binding = 0) buffer MeshDataBuffer {
@@ -38,10 +39,9 @@ void main() {
     vec3 localTransformedPos = localOrientationMatrix * scaledPosition + localPosition;
 
     // Step 2: Get world geometry transform with physics interpolation
-    vec3 meshPositionL = dekkerSubtract(
-        meshData.positionHigh.xyz, meshData.positionLow.xyz,
-        u_cameraPositionHigh, u_cameraPositionLow
-    );
+    vec3 meshPositionL = df3ToVec(df3Sub(
+        Df3(meshData.positionHigh.xyz, meshData.positionLow.xyz),
+        Df3(u_cameraPositionHigh, u_cameraPositionLow)));
 
     // Add velocity in camera-relative space
     vec3 velocityDelta = meshData.velocity.xyz * deltaTimeFloat;

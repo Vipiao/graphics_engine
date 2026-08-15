@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <stdexcept>
 #include <glm/gtc/quaternion.hpp>
+#include "math/DekkerArithmetic.h"
 
 namespace {
 
@@ -29,15 +30,20 @@ void spliceSurfaceBody(std::string& source, const std::string& body) {
     source.replace(markerPos, std::char_traits<char>::length(s_surfaceMarker), body);
 }
 
-// CPU twin of the vertex-stage transform in shared_shaders/mesh_transform.glsl,
-// run backwards: it rebuilds the interpolated pose the body will be drawn at
-// this frame and puts the camera into that body's own frame. Selection has to
-// measure against the pose the geometry actually lands at, so the two must stay
-// in step; the forward direction lives in that shader.
+// Rebuilds the interpolated pose the body will be drawn at this frame and puts
+// the camera into that body's own frame. Selection has to measure against the
+// pose the geometry actually lands at, and the vertex stage has to undo exactly
+// the placement made here, so this is where both are decided rather than a
+// duplicate of a decision made in the shader.
 //
-// All double here, so unlike the shader this needs no Dekker split: subtracting
-// two world positions of similar magnitude is exact enough on its own.
-glm::dvec3 cameraInBodySpace(const MeshTransform& transform,
+// All double here, so unlike the mesh stages this needs no Dekker split:
+// subtracting two world positions of similar magnitude is exact enough on its
+// own. What is narrowed is the rotation, and deliberately: it is inverted at the
+// width it will be uploaded at, so the shader's forward rotation and this
+// backward one are true inverses. Inverting the exact rotation instead would
+// leave them a part in ten million apart, and a part in ten million of the
+// camera's distance from a planet's centre is most of a metre.
+CdlodBodyPose bodyRenderPose(const MeshTransform& transform,
                              const FrameRenderParams& params) {
     // Signed, so a body stamped with a time ahead of the frame's extrapolates
     // backwards instead of wrapping into an enormous forward step.
@@ -48,26 +54,61 @@ glm::dvec3 cameraInBodySpace(const MeshTransform& transform,
     const glm::dvec3 bodyPosition{transform.position + transform.velocity * deltaTime};
     const glm::dquat spin{
         glm::angleAxis(transform.angVel * deltaTime, transform.angVelAxis)};
-    const glm::dquat bodyOrientation{spin * transform.orientation};
+    const glm::dmat3 bodyRotation{glm::mat3{glm::mat3_cast(spin * transform.orientation)}};
+
+    // Scale comes back from float too: the vertex stage reads the copy in the
+    // shared SSBO, and a scale that differed in its last bit would tilt the
+    // whole cancellation by that much of the body's radius.
+    const glm::dvec3 scale{glm::vec3{transform.scale}};
 
     // Undoes the vertex stage's steps in reverse: world offset, then the
-    // rotation about the centre of rotation, then the scale.
+    // rotation about the centre of rotation, then the scale. The centre of
+    // rotation appears on both sides of that stage and cancels, so its own width
+    // never enters.
     const glm::dvec3 relative{params.camPos - bodyPosition - transform.centerOfRotation};
-    const glm::dvec3 rotated{glm::conjugate(bodyOrientation) * relative};
-    return (rotated + transform.centerOfRotation) / transform.scale;
+    const glm::dvec3 rotated{glm::inverse(bodyRotation) * relative};
+
+    return CdlodBodyPose{bodyRotation, (rotated + transform.centerOfRotation) / scale};
+}
+
+// Splits a body-sized value into the float pair the vertex stage reads as one
+// wide float. The same split every other camera-relative buffer in this renderer
+// is filled with, and the same one shared_shaders/dekker_arithmetic.glsl adds
+// back on the far side.
+std::pair<glm::vec3, glm::vec3> splitWide(const glm::dvec3& value) {
+    using DekkerFloat = DekkerArithmetic<float>;
+    const DekkerFloat::DekkerNumber x{value.x};
+    const DekkerFloat::DekkerNumber y{value.y};
+    const DekkerFloat::DekkerNumber z{value.z};
+
+    return {glm::vec3{x.main, y.main, z.main}, glm::vec3{x.error, y.error, z.error}};
 }
 
 // A tree's leaf as the vertex stages read it. The narrowing to float happens
 // here rather than in the tree, which works in double throughout and has no
 // business knowing what an attribute can hold.
 CdlodPatch makePatch(const CdlodLeaf& leaf, int32_t instanceIndex) {
-    return CdlodPatch{glm::vec3{leaf.m_frame.m_centre}, glm::vec3{leaf.m_frame.m_uAxis},
+    const auto [centreHigh, centreLow] = splitWide(leaf.m_frame.m_centre);
+
+    return CdlodPatch{centreHigh, centreLow, glm::vec3{leaf.m_frame.m_uAxis},
                       glm::vec3{leaf.m_frame.m_vAxis}, leaf.m_level, instanceIndex};
 }
 
+// A mat3 in the column-per-vec4 shape std430 gives it, so the struct's own
+// layout matches what the shader reads without a rule about padding.
+glm::mat3x4 paddedColumns(const glm::dmat3& rotation) {
+    const glm::mat3 narrow{rotation};
+    return glm::mat3x4{glm::vec4{narrow[0], 0.0f}, glm::vec4{narrow[1], 0.0f},
+                       glm::vec4{narrow[2], 0.0f}};
+}
+
 CdlodInstanceData makeInstanceData(const CdlodInstance& instance) {
+    const auto [cameraHigh, cameraLow] = splitWide(instance.m_pose.m_cameraBodyPosition);
+
     return CdlodInstanceData{glm::vec4{instance.m_config.m_baseColor},
-                             glm::vec4{glm::vec3{instance.m_cameraBodyPosition}, 0.0f},
+                             glm::vec4{cameraHigh, 0.0f},
+                             glm::vec4{cameraLow, 0.0f},
+                             paddedColumns(instance.m_pose.m_bodyRotation),
                              static_cast<float>(instance.m_config.m_lodRangeFactor),
                              instance.m_ssboIndex,
                              {0, 0}};
@@ -107,29 +148,34 @@ CdlodSurface::CdlodSurface(GLuint patchIndexBuffer) {
     // Locations start at 4, leaving 0..3 free so the layout stays readable
     // against the instanced-geometry shaders.
     glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(CdlodPatch),
-                          (void*)offsetof(CdlodPatch, m_centre));
+                          (void*)offsetof(CdlodPatch, m_centreHigh));
     glEnableVertexAttribArray(4);
     glVertexAttribDivisor(4, 1);
 
     glVertexAttribPointer(5, 3, GL_FLOAT, GL_FALSE, sizeof(CdlodPatch),
-                          (void*)offsetof(CdlodPatch, m_uAxis));
+                          (void*)offsetof(CdlodPatch, m_centreLow));
     glEnableVertexAttribArray(5);
     glVertexAttribDivisor(5, 1);
 
     glVertexAttribPointer(6, 3, GL_FLOAT, GL_FALSE, sizeof(CdlodPatch),
-                          (void*)offsetof(CdlodPatch, m_vAxis));
+                          (void*)offsetof(CdlodPatch, m_uAxis));
     glEnableVertexAttribArray(6);
     glVertexAttribDivisor(6, 1);
 
-    glVertexAttribIPointer(7, 1, GL_INT, sizeof(CdlodPatch),
-                           (void*)offsetof(CdlodPatch, m_level));
+    glVertexAttribPointer(7, 3, GL_FLOAT, GL_FALSE, sizeof(CdlodPatch),
+                          (void*)offsetof(CdlodPatch, m_vAxis));
     glEnableVertexAttribArray(7);
     glVertexAttribDivisor(7, 1);
 
     glVertexAttribIPointer(8, 1, GL_INT, sizeof(CdlodPatch),
-                           (void*)offsetof(CdlodPatch, m_instanceIndex));
+                           (void*)offsetof(CdlodPatch, m_level));
     glEnableVertexAttribArray(8);
     glVertexAttribDivisor(8, 1);
+
+    glVertexAttribIPointer(9, 1, GL_INT, sizeof(CdlodPatch),
+                           (void*)offsetof(CdlodPatch, m_instanceIndex));
+    glEnableVertexAttribArray(9);
+    glVertexAttribDivisor(9, 1);
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -325,12 +371,12 @@ void CdlodHandler::selectVisibleNodes(CdlodSurface& surface,
 
         const MeshTransform& transform{
             m_ssboManager->getMeshTransform(instance.m_ssboIndex)};
-        instance.m_cameraBodyPosition = cameraInBodySpace(transform, params);
+        instance.m_pose = bodyRenderPose(transform, params);
 
         // The tree describes leaves, not who owns them, so the ones it just
         // appended are stamped here with where this instance's parameters sit.
         const size_t firstLeaf{surface.m_selectedLeaves.size()};
-        instance.m_tree.updateAndSelect(instance.m_cameraBodyPosition,
+        instance.m_tree.updateAndSelect(instance.m_pose.m_cameraBodyPosition,
                                         surface.m_selectedLeaves);
         for (size_t leaf{firstLeaf}; leaf < surface.m_selectedLeaves.size(); ++leaf) {
             surface.m_selectedPatches.push_back(makePatch(
@@ -401,8 +447,10 @@ void CdlodHandler::renderAllSurfaces(const FrameRenderParams& params, bool isGeo
         program.use();
         const unsigned int activeProgram{program.getID()};
 
-        // view, projection, u_time, u_timeRemainder and the Dekker-split camera,
-        // shared with every other camera-relative instanced draw.
+        // Shared with every other camera-relative instanced draw, though these
+        // stages take only view and projection from it: a CDLOD vertex arrives
+        // camera-relative already, placed against the pose selection measured
+        // with, so the timing and the split camera have nothing left to do here.
         setInstanceFrameUniforms(activeProgram, params);
 
         const GLint patchVerticesLoc{glGetUniformLocation(activeProgram, "u_patchVertices")};

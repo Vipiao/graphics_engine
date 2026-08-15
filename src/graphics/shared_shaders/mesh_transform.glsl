@@ -68,22 +68,6 @@ mat3 rotationMatrix(float angle, vec3 unitAxis) {
     );
 }
 
-// Dekker subtraction: result = a - b, carrying the low-order error term.
-// "precise" keeps the compiler from reassociating the error-cancellation
-// arithmetic, which would defeat the extended precision.
-vec3 dekkerSubtract(vec3 aHigh, vec3 aLow, vec3 bHigh, vec3 bLow) {
-    precise vec3 r = aHigh - bHigh;
-    precise vec3 error;
-    for(int i = 0; i < 3; i++) {
-        if(abs(aHigh[i]) > abs(bHigh[i])) {
-            error[i] = aHigh[i] - r[i] - bHigh[i] + aLow[i] - bLow[i];
-        } else {
-            error[i] = -bHigh[i] - r[i] + aHigh[i] + aLow[i] - bLow[i];
-        }
-    }
-    return r + error;
-}
-
 mat3 calculatePhysicsOrientation(vec4 baseOrientation, vec4 angVel, float deltaTime) {
     mat3 orientation = fromQuaternion(baseOrientation);
     return rotationMatrix(angVel.w * deltaTime, angVel.xyz) * orientation;

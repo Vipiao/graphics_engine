@@ -6,6 +6,7 @@
 // stage, and forwards the per-instance animated values so the fragment scaffold
 // can shade the volume along the view ray.
 
+#include "../shared_shaders/dekker_arithmetic.glsl"
 #include "../shared_shaders/mesh_transform.glsl"
 
 layout(std430, binding = 0) buffer MeshDataBuffer {
@@ -60,9 +61,9 @@ void main() {
    vec3 localPos = localRot * (position * localScale) + localPosition;
 
    // Mesh world transform in camera-relative space, with physics interpolation
-   vec3 meshPositionL = dekkerSubtract(
-      meshData.positionHigh.xyz, meshData.positionLow.xyz,
-      u_cameraPositionHigh, u_cameraPositionLow);
+   vec3 meshPositionL = df3ToVec(df3Sub(
+      Df3(meshData.positionHigh.xyz, meshData.positionLow.xyz),
+      Df3(u_cameraPositionHigh, u_cameraPositionLow)));
    meshPositionL += meshData.velocity.xyz * deltaTimeFloat;
 
    mat3 worldOrientation =
