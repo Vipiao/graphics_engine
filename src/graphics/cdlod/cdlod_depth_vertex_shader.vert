@@ -30,10 +30,10 @@ void main() {
    // The same displacement the G-buffer stage applies, or the shadow map would
    // be cast by a different surface than the one it falls on. Both passes are
    // handed the same camera, so both offsets are measured from the same point.
-   vec3 crudePoint;  // the shading stage's, and nothing this pass shades
+   vec3 crudeOffset;  // the shading stage's, and nothing this pass shades
    vec3 cameraOffset = cdlodBuildVertex(
       gl_VertexID, Df3(patchCentreHigh, patchCentreLow),
-      patchUAxis, patchVAxis, patchLevel, instance, crudePoint);
+      patchUAxis, patchVAxis, patchLevel, instance, crudeOffset);
 
    vec3 worldOffset = instance.bodyRotation * (cameraOffset * meshData.scale.xyz);
 

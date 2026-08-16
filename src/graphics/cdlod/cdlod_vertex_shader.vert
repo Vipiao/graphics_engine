@@ -30,10 +30,21 @@ uniform mat4 projection;
 // patch was selected at, not just where its edges are.
 uniform bool u_colorByLevel;
 
-// The crude point this vertex was built from, so the fragment stage can ask the
-// surface for the normal there and shade per pixel rather than per vertex.
-// Interpolating it is exact: it is affine in the patch coordinate.
-out vec3 vert_crudePoint;
+// The crude point this vertex was built from, split so the fragment stage can
+// rebuild it at full width and ask the surface for the normal there, shading per
+// pixel rather than per vertex.
+//
+// Split because the interpolator works in float: it blends the three vertices
+// per pixel and rounds the result to a float at that result's own magnitude, so
+// a body-sized value arrives quantized to half a metre however exactly it was
+// sent. The centre is therefore passed flat -- every vertex of a patch carries
+// the same instance attribute, so flat delivers those bits untouched -- and only
+// the displacement within the patch is interpolated. That one is bounded by the
+// patch's half diagonal, which the tree keeps proportional to camera distance,
+// so rounding it costs a fixed fraction of a pixel.
+flat out vec3 vert_patchCentreHigh;
+flat out vec3 vert_patchCentreLow;
+out vec3 vert_crudeOffset;
 // Body -> view rotation, for taking that normal into the space the G-buffer
 // stores. Constant across a body, so it is passed flat rather than interpolated.
 flat out mat3 vert_bodyToView;
@@ -45,10 +56,10 @@ void main() {
    MeshData meshData = meshDataBuffer[instance.ssboIndex];
 
    // Patch vertex -> crude point -> the surface, already relative to the camera.
-   vec3 crudePoint;
+   vec3 crudeOffset;
    vec3 cameraOffset = cdlodBuildVertex(
       gl_VertexID, Df3(patchCentreHigh, patchCentreLow),
-      patchUAxis, patchVAxis, patchLevel, instance, crudePoint);
+      patchUAxis, patchVAxis, patchLevel, instance, crudeOffset);
 
    // The pose acts on that offset rather than on a body-frame position, so its
    // last bits cost a fraction of the vertex's distance instead of half a metre
@@ -60,7 +71,9 @@ void main() {
    // already builds this pose there, and a second answer could disagree.
    vec3 worldOffset = instance.bodyRotation * (cameraOffset * meshData.scale.xyz);
 
-   vert_crudePoint = crudePoint;
+   vert_patchCentreHigh = patchCentreHigh;
+   vert_patchCentreLow = patchCentreLow;
+   vert_crudeOffset = crudeOffset;
    vert_bodyToView = mat3(view) * instance.bodyRotation;
    vert_color = u_colorByLevel ? vec4(cdlodLevelColor(patchLevel), 1.0) : instance.baseColor;
    vert_emissiveScalar = meshData.emissiveScalar;

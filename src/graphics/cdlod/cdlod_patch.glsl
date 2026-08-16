@@ -80,31 +80,43 @@ vec2 cdlodPatchGridUv(ivec2 grid, float morphK) {
    return (vec2(grid) - isOdd * morphK) / float(u_patchVertices - 1);
 }
 
-// A patch coordinate placed in the node's own frame: the crude point, in the
-// space the quadtree subdivides and before the surface has said anything about
-// where it goes. Affine in patchUv, which is what lets it be interpolated across
-// a triangle exactly.
+// A patch coordinate placed in the node's own frame, as a displacement from the
+// node's centre: half of the crude point, and the half that is small. Affine in
+// patchUv, which is what lets it be interpolated across a triangle exactly.
 //
-// Only the centre is wide. The axes are half a patch edge, and the tree keeps a
-// patch within twice its own range, so they scale with distance and their last
-// bits are a fixed fraction of a pixel. The centre stays body-sized however small
-// the patch gets.
-Df3 cdlodCrudePoint(vec2 patchUv, Df3 centre, vec3 uAxis, vec3 vAxis) {
-   vec3 offset = (2.0 * patchUv.x - 1.0) * uAxis
-               + (2.0 * patchUv.y - 1.0) * vAxis;
-   return df3AddVec(centre, offset);
+// Kept apart from the centre rather than added to it, because the two want
+// different treatment everywhere they go. The axes are half a patch edge, and
+// the tree keeps a patch within twice its own range, so they scale with distance
+// and their last bits are a fixed fraction of a pixel. The centre stays
+// body-sized however small the patch gets.
+vec3 cdlodPatchOffset(vec2 patchUv, vec3 uAxis, vec3 vAxis) {
+   return (2.0 * patchUv.x - 1.0) * uAxis
+        + (2.0 * patchUv.y - 1.0) * vAxis;
 }
 
 // The injected surface body turns a crude point into geometry:
 //
 //    Df3  cdlodSurfacePoint(Df3 crudePoint);
-//    vec3 cdlodSurfaceNormal(vec3 crudePoint);
+//    vec3 cdlodSurfaceNormal(Df3 crudePoint, vec3 crudeDerivX, vec3 crudeDerivY);
+//
+// The normal is given how far the crude point moves to the neighbouring pixels,
+// which is what a body sampling a texture needs to choose a filter width by. It
+// arrives from the caller rather than being differenced inside the body because
+// only one of the two stages has screen derivatives at all, and the body is
+// compiled into both.
 //
 // crudePoint is a point of the solid the caller's root frames came off, in the
 // body's own frame and in metres; what that solid is and what surface it maps to
 // are the caller's entirely. Two functions rather than one because the vertex
-// stage places geometry and the fragment stage shades, which is also why they
-// differ in width: a position is body-sized, a normal is only a direction.
+// stage places geometry and the fragment stage shades, and they differ in what
+// they return: a position is body-sized and needs the width, a normal is only a
+// direction.
+//
+// Both take the point wide, including the one that returns a direction. A normal
+// is tolerant of where it is measured only until the surface is asked about
+// detail finer than the error: a body-sized float steps half a metre, and a
+// surface reading a map at millimetre texels would be sampling a lattice rather
+// than itself.
 //
 // Df3 and the arithmetic on it are already in scope here, so the body uses them
 // without naming a path: it is spliced in below the include above, and a snippet
@@ -159,15 +171,19 @@ float cdlodMorphWeight(vec3 restOffset, float patchEdge, int patchLevel,
 
 // The vertex both stages draw, as an offset from the camera: its length is how
 // far away the vertex is, so the float operations after it cost a fixed fraction
-// of what it subtends. crudePoint comes back narrowed for the shading stage,
-// which a normal tolerates and a position does not.
+// of what it subtends.
+//
+// crudeOffset comes back for the shading stage, which pairs it with the node
+// centre it was measured from. It leaves as a displacement rather than a point
+// because only a displacement survives the trip: a point is body-sized, and the
+// interpolator between the stages works in float whatever is handed to it.
 //
 // Shared so the depth pass cannot place a vertex anywhere the G-buffer pass does
 // not. The surface is evaluated twice: unmorphed to find how far this vertex is,
 // then at the coordinate that distance chose -- the morph follows from the
 // distance, so the distance cannot follow from the morph.
 vec3 cdlodBuildVertex(int vertexId, Df3 centre, vec3 uAxis, vec3 vAxis,
-                      int patchLevel, CdlodInstanceData instance, out vec3 crudePoint) {
+                      int patchLevel, CdlodInstanceData instance, out vec3 crudeOffset) {
    // Already a high and a low part in the buffer, so it is the wide float itself
    // rather than something to be assembled into one.
    Df3 cameraBodyPosition = Df3(instance.cameraBodyPositionHigh.xyz,
@@ -175,27 +191,29 @@ vec3 cdlodBuildVertex(int vertexId, Df3 centre, vec3 uAxis, vec3 vAxis,
    // Grid coordinate of this vertex within the patch, in whole vertices.
    ivec2 grid = ivec2(vertexId % u_patchVertices, vertexId / u_patchVertices);
 
-   Df3 restCrude = cdlodCrudePoint(cdlodPatchGridUv(grid, 0.0), centre, uAxis, vAxis);
-   vec3 restOffset = df3ToVec(df3Sub(cdlodSurfacePoint(restCrude), cameraBodyPosition));
+   vec3 restPatchOffset = cdlodPatchOffset(cdlodPatchGridUv(grid, 0.0), uAxis, vAxis);
+   Df3 restCrude = df3AddVec(centre, restPatchOffset);
+   vec3 restCameraOffset =
+      df3ToVec(df3Sub(cdlodSurfacePoint(restCrude), cameraBodyPosition));
 
    float patchEdge = 2.0 * length(uAxis);
    float morphK =
-      cdlodMorphWeight(restOffset, patchEdge, patchLevel, instance.lodRangeFactor);
+      cdlodMorphWeight(restCameraOffset, patchEdge, patchLevel, instance.lodRangeFactor);
 
    // At zero the morphed coordinate is the rest coordinate down to the bit, so
    // asking the surface again would return what it just returned. The band is a
    // narrow part of the range a leaf lives in, so most patches are below it
    // entirely and take this together rather than vertex by vertex.
    if (morphK == 0.0) {
-      crudePoint = df3ToVec(restCrude);
-      return restOffset;
+      crudeOffset = restPatchOffset;
+      return restCameraOffset;
    }
 
-   Df3 morphedCrude =
-      cdlodCrudePoint(cdlodPatchGridUv(grid, morphK), centre, uAxis, vAxis);
+   vec3 morphedPatchOffset = cdlodPatchOffset(cdlodPatchGridUv(grid, morphK), uAxis, vAxis);
 
-   crudePoint = df3ToVec(morphedCrude);
-   return df3ToVec(df3Sub(cdlodSurfacePoint(morphedCrude), cameraBodyPosition));
+   crudeOffset = morphedPatchOffset;
+   return df3ToVec(df3Sub(cdlodSurfacePoint(df3AddVec(centre, morphedPatchOffset)),
+                          cameraBodyPosition));
 }
 
 // Distinct hue per quadtree level, for the debug view. Reading the tree's state
