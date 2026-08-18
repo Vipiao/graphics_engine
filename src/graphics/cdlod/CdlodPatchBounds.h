@@ -15,10 +15,19 @@ struct CdlodPatchFrame {
 };
 
 // A sphere containing a patch as it renders, in the body's own frame and in
-// metres.
+// metres, and how the frame scaled on its way there.
 struct CdlodPatchBounds {
     glm::dvec3 m_centre{0.0};
+    // Metres, measured where the patch is drawn, so the shape's compression is
+    // already in it. Scaling by m_frameScale would apply that twice.
     double m_radius{0.0};
+    // Drawn size over frame size, dimensionless. The radius above already carries
+    // it; the frame's axes do not, and the renderer sizes patches by those.
+    //
+    // Must be honest, unlike the radius: the level and the morph are chosen by it,
+    // so neighbours agreeing here is what closes the seam between them. Left at
+    // one, patches are sized by their frames and only detail suffers.
+    double m_frameScale{1.0};
 };
 
 /**
@@ -32,8 +41,11 @@ struct CdlodPatchBounds {
  * displacement included. Too small reopens the seams morphing exists to close;
  * too large only costs triangles.
  *
- * Nothing else is required. The shape may stretch, fold or displace by any
- * amount, and may bound itself however it likes.
+ * Nothing else is required of the sphere. The shape may stretch, fold or
+ * displace by any amount, and may bound itself however it likes.
+ *
+ * A body that compresses its frames unevenly should say so through m_frameScale,
+ * or the renderer sizes its patches by frames that no longer describe them.
  */
 class ICdlodPatchBounds {
 public:

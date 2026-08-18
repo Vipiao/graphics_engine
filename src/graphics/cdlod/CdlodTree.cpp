@@ -23,10 +23,10 @@ CdlodTree::CdlodTree(const CdlodConfig& config, std::vector<CdlodPatchFrame> roo
                "A root with a zero axis has no edge length, so it can never split");
 
         // The split range here and the morph in cdlod_patch.glsl both take the
-        // patch's size from its u axis alone, which describes the patch only while
-        // the two axes match. Splitting halves both, so a root that is not square
-        // stays that way all the way down, and its detail would be chosen for a
-        // size it does not have.
+        // patch's size from its u axis and one scale, which describes the patch
+        // only while the two axes match. Splitting halves both, so a root that is
+        // not square stays that way all the way down, and its detail would be
+        // chosen for a size it does not have.
         assert(glm::abs(uLength - vLength) <=
                    k_squareTolerance * glm::max(uLength, vLength) &&
                "Patch frames must be square: size is measured along the u axis alone");
@@ -41,8 +41,10 @@ int32_t CdlodTree::allocateChildren() {
                static_cast<size_t>(blockStart) + k_childCount <= m_nodes.size() &&
                "The free list holds a block that is not in the pool");
 
+        // The whole entry, not just the child link: a recycled node's cached
+        // bounds describe wherever it used to sit.
         for (int childIndex{0}; childIndex < k_childCount; ++childIndex) {
-            m_nodes[blockStart + childIndex].m_firstChild = -1;
+            m_nodes[blockStart + childIndex] = CdlodNode{};
         }
         return blockStart;
     }
@@ -78,14 +80,17 @@ CdlodPatchFrame CdlodTree::childFrame(const CdlodPatchFrame& frame, int childInd
     return CdlodPatchFrame{frame.m_centre + uHalf * uSign + vHalf * vSign, uHalf, vHalf};
 }
 
-double CdlodTree::distanceToNode(const CdlodPatchFrame& frame,
-                                 const glm::dvec3& point) const {
-    // The bound contains the patch as drawn, so subtracting its radius gives a
-    // distance no point of it is nearer than -- which is what keeps neighbouring
-    // leaves within one level of each other.
-    const CdlodPatchBounds bounds{m_bounds->patchBounds(frame)};
+const CdlodPatchBounds& CdlodTree::nodeBounds(int32_t nodeIndex,
+                                              const CdlodPatchFrame& frame) {
+    assert(nodeIndex >= 0 && static_cast<size_t>(nodeIndex) < m_nodes.size() &&
+           "Bounding a node that is not in the pool");
 
-    return glm::max(0.0, glm::length(point - bounds.m_centre) - bounds.m_radius);
+    CdlodNode& node{m_nodes[nodeIndex]};
+    if (!node.m_boundsKnown) {
+        node.m_bounds = m_bounds->patchBounds(frame);
+        node.m_boundsKnown = true;
+    }
+    return node.m_bounds;
 }
 
 void CdlodTree::updateAndSelect(const glm::dvec3& cameraBodyPosition,
@@ -115,12 +120,19 @@ void CdlodTree::visitNode(int32_t nodeIndex, const CdlodPatchFrame& frame, int d
            "Traversing a node that is not in the pool");
     assert(depth <= k_maxDepth && "Traversal went deeper than the depth limit allows");
 
-    // The distance at which this node's resolution stops being enough, taken from
-    // the frame rather than from where it renders: splitting halves the axes
-    // exactly, and that exact halving is what the one-level neighbour bound needs.
-    const double nodeEdge{2.0 * glm::length(frame.m_uAxis)};
+    const CdlodPatchBounds& bounds{nodeBounds(nodeIndex, frame)};
+
+    // The distance at which this node's resolution stops being enough, sized as
+    // the body draws it: a shape that compresses its frames would otherwise split
+    // for a patch larger than it renders. The frame still supplies the halving,
+    // so a node is half its parent up to how unevenly the body scales the two.
+    const double nodeEdge{2.0 * glm::length(frame.m_uAxis) * bounds.m_frameScale};
     const double splitRange{m_config.m_lodRangeFactor * nodeEdge};
-    const double distance{distanceToNode(frame, cameraBodyPosition)};
+
+    // Subtracting the containing radius gives a distance no point of the patch is
+    // nearer than, which is what keeps neighbouring leaves within one level.
+    const double distance{
+        glm::max(0.0, glm::length(cameraBodyPosition - bounds.m_centre) - bounds.m_radius)};
 
     // Splitting and merging share one threshold, so the tree's shape is a pure
     // function of where the camera is rather than of how it got there. The band
@@ -149,7 +161,7 @@ void CdlodTree::visitNode(int32_t nodeIndex, const CdlodPatchFrame& frame, int d
     }
 
     if (!hasChildren) {
-        leaves.push_back(CdlodLeaf{frame, depth});
+        leaves.push_back(CdlodLeaf{frame, depth, bounds.m_frameScale});
         return;
     }
 

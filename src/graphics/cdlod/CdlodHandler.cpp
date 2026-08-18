@@ -66,6 +66,9 @@ CdlodBodyPose bodyRenderPose(const MeshTransform& transform,
     // rotation appears on both sides of that stage and cancels, so its own width
     // never enters.
     const glm::dvec3 relative{params.camPos - bodyPosition - transform.centerOfRotation};
+    // A true inverse, not a transpose: narrowing to float leaves the rotation a
+    // part in ten million off orthonormal, worth half a metre of camera position
+    // at a planet's radius.
     const glm::dvec3 rotated{glm::inverse(bodyRotation) * relative};
 
     return CdlodBodyPose{bodyRotation, (rotated + transform.centerOfRotation) / scale};
@@ -90,8 +93,9 @@ std::pair<glm::vec3, glm::vec3> splitWide(const glm::dvec3& value) {
 CdlodPatch makePatch(const CdlodLeaf& leaf, int32_t instanceIndex) {
     const auto [centreHigh, centreLow] = splitWide(leaf.m_frame.m_centre);
 
-    return CdlodPatch{centreHigh, centreLow, glm::vec3{leaf.m_frame.m_uAxis},
-                      glm::vec3{leaf.m_frame.m_vAxis}, leaf.m_level, instanceIndex};
+    return CdlodPatch{centreHigh,   centreLow,     glm::vec3{leaf.m_frame.m_uAxis},
+                      glm::vec3{leaf.m_frame.m_vAxis}, leaf.m_level, instanceIndex,
+                      static_cast<float>(leaf.m_frameScale)};
 }
 
 // A mat3 in the column-per-vec4 shape std430 gives it, so the struct's own
@@ -176,6 +180,11 @@ CdlodSurface::CdlodSurface(GLuint patchIndexBuffer) {
                            (void*)offsetof(CdlodPatch, m_instanceIndex));
     glEnableVertexAttribArray(9);
     glVertexAttribDivisor(9, 1);
+
+    glVertexAttribPointer(10, 1, GL_FLOAT, GL_FALSE, sizeof(CdlodPatch),
+                          (void*)offsetof(CdlodPatch, m_frameScale));
+    glEnableVertexAttribArray(10);
+    glVertexAttribDivisor(10, 1);
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);

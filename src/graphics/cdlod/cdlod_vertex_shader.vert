@@ -20,6 +20,7 @@ layout (location = 6) in vec3 patchUAxis;
 layout (location = 7) in vec3 patchVAxis;
 layout (location = 8) in int patchLevel;
 layout (location = 9) in int instanceIndex;
+layout (location = 10) in float patchFrameScale;
 
 uniform mat4 view;
 uniform mat4 projection;
@@ -59,7 +60,7 @@ void main() {
    vec3 crudeOffset;
    vec3 cameraOffset = cdlodBuildVertex(
       gl_VertexID, Df3(patchCentreHigh, patchCentreLow),
-      patchUAxis, patchVAxis, patchLevel, instance, crudeOffset);
+      patchUAxis, patchVAxis, patchFrameScale, patchLevel, instance, crudeOffset);
 
    // The pose acts on that offset rather than on a body-frame position, so its
    // last bits cost a fraction of the vertex's distance instead of half a metre

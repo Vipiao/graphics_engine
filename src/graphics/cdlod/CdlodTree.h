@@ -18,6 +18,9 @@
 struct CdlodLeaf {
     CdlodPatchFrame m_frame{};
     int m_level{0};  // 0 = root; depth in the quadtree
+    // Carried out so the vertex stage sizes the patch the way the split test did;
+    // recovering it downstream would mean bounding the patch again.
+    double m_frameScale{1.0};
 };
 
 /**
@@ -79,10 +82,14 @@ private:
     // exactly, and splitting halves both axes together.
     static constexpr double k_squareTolerance{1e-9};
 
-    // Pool entry. Everything else about a node -- its frame and its depth -- is
-    // derived on the way down, since a child's is a halving of its parent's.
+    // Pool entry. Frame and depth are derived on the way down, since a child's is
+    // a halving of its parent's. The bounds are kept instead: asking the body
+    // costs a surface evaluation, the traversal asks once per node per frame, and
+    // the answer is fixed by where the node sits. Only recycling invalidates it.
     struct CdlodNode {
         int32_t m_firstChild{-1};  // first of four contiguous children, -1 = leaf
+        CdlodPatchBounds m_bounds{};
+        bool m_boundsKnown{false};
     };
 
     // The body's config as given. CdlodConfig is where the dimensions and the
@@ -114,6 +121,7 @@ private:
     // stepped into one of the four corners.
     static CdlodPatchFrame childFrame(const CdlodPatchFrame& frame, int childIndex);
 
-    // Shortest distance from a point to the node as it renders, in body space.
-    double distanceToNode(const CdlodPatchFrame& frame, const glm::dvec3& point) const;
+    // Where the node lands once drawn, off the pool entry if it has been asked
+    // before and out of the body if not.
+    const CdlodPatchBounds& nodeBounds(int32_t nodeIndex, const CdlodPatchFrame& frame);
 };

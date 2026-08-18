@@ -36,9 +36,10 @@ public:
    // Frame control methods
    bool shouldClose() const { return glfwWindowShouldClose(m_window); }
    void clearScreen();
-   // Opens a frame: samples its start and derives the rate the previous one
-   // achieved. Call once per frame, after clearScreen has cleared the vsync
-   // throttle, so the sample lands at the frame's true start.
+   // Opens a frame: samples its start, derives the rate the previous one
+   // achieved, and carries the paced clock forward. Call once per frame, after
+   // clearScreen has cleared the vsync throttle, so the sample lands at the
+   // frame's true start.
    void updateFrameTiming();
    void updateInput();
    void calculateCameraVelocity();
@@ -77,6 +78,12 @@ public:
    // Start of the current frame; the single frame-start timestamp, so
    // everything pacing off the frame agrees on when it began.
    std::chrono::time_point<std::chrono::high_resolution_clock> m_frameStartTime{};
+   // The same instant on the display's own beat rather than the clock's. See
+   // advancePacedClock.
+   std::chrono::time_point<std::chrono::high_resolution_clock> m_renderTime{};
+   // Seconds the paced clock advances by, low passed across the frames
+   // k_pacingGain spreads a sample over.
+   double m_pacedFramePeriod{ 0.0 };
    //glm::dquat m_camOri{ glm::sqrt(2.) / 2., -glm::sqrt(2.) / 2.,0,0 }; // 90% rotation around negative x axis.
    glm::dquat m_camOri{ 1,0,0,0 }; // Unit orientation.
    uint64_t m_frameNum{ 0 };
@@ -108,6 +115,17 @@ protected:
    // arbitrarily long gap, which must not become an arbitrarily long time step.
    static constexpr double k_minFrameDelta{ 0.001 };  // 1000 fps
    static constexpr double k_maxFrameDelta{ 0.1 };    // 10 fps
+   // How much of a frame's period and drift the paced clock takes on; its
+   // reciprocal is the frames a sample spreads over. Long enough to outlast a
+   // burst of frames opening together, short enough to follow a real rate change.
+   static constexpr double k_pacingGain{ 0.05 };
+   // Drift past which the clock takes the sample outright. This far out is a
+   // stall or a pause rather than pacing noise, and easing onto it would hold the
+   // pose wrong for as long as the easing took.
+   static constexpr double k_pacingResyncSeconds{ 0.25 };
+
+   // Carries m_renderTime one frame forward off the sample just taken.
+   void advancePacedClock(double frameDelta);
 
    TimeHandler* m_timeHandler{ nullptr };
 

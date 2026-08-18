@@ -61,6 +61,9 @@ struct CdlodPatch {
     // Position in the surface's m_instanceData, so a patch can reach everything
     // true of the whole body it belongs to.
     int32_t m_instanceIndex{-1};
+    // What the tree sized this patch by, so the morph sizes it the same way.
+    // Near one, so unlike the centre it loses nothing to a float.
+    float m_frameScale{1.0f};
 };
 
 // Where a body stands this frame, as both the tree and the vertex stage need it.
