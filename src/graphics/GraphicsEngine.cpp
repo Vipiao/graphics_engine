@@ -21,10 +21,12 @@ GraphicsEngine::GraphicsEngine(
     const std::string& windowTitle,
     size_t maxTriangles,
     size_t maxMeshes,
-    GraphicsEngineBase::Mode mode)
+    GraphicsEngineBase::Mode mode,
+    const std::filesystem::path& controlRecordingDir)
 {
     // Create GraphicsEngineBase
-    m_graphicsEngineBase = std::make_shared<GraphicsEngineBase>(timeHandler, mode);
+    m_graphicsEngineBase =
+        std::make_shared<GraphicsEngineBase>(timeHandler, mode, controlRecordingDir);
     
     // Configure window
     m_graphicsEngineBase->m_screen_width = screenWidth;

@@ -15,6 +15,8 @@
 // Texture2D.h provides TextureSpec, which callers fill in to hand a surface
 // generated image data.
 #include "Texture2D.h"
+// filesystem carries the recording path the constructor passes through.
+#include <filesystem>
 
 class TextureStore;
 #include <memory>
@@ -45,7 +47,11 @@ public:
         const std::string& windowTitle = "Graphics Engine",
         size_t maxTriangles = 10000,
         size_t maxMeshes = 100,
-        GraphicsEngineBase::Mode mode = GraphicsEngineBase::Mode::NONE
+        GraphicsEngineBase::Mode mode = GraphicsEngineBase::Mode::NONE,
+        // Where the mouse and keyboard journals live. Passed through rather than
+        // defaulted deeper, so one caller places every stream of a session
+        // together.
+        const std::filesystem::path& controlRecordingDir = "recording_mouse_keyboard"
     );
     
     ~GraphicsEngine();
