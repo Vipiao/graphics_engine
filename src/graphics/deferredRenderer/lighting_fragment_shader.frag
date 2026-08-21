@@ -8,7 +8,7 @@ uniform sampler2D gAlbedo;
 uniform sampler2D gNormal;
 uniform sampler2D gMaterial;
 uniform sampler2D gDepth;
-uniform sampler2DArray u_shadowMap;
+uniform sampler2DArrayShadow u_shadowMap;
 uniform int u_numCascades;
 uniform mat4 u_lightSpaceMatrices[4];
 uniform float u_cascadeBiasScales[4];
@@ -224,16 +224,20 @@ float calculateShadow(
     vec2 jitter = vec2(blueNoiseJitter(ivec2(29, 7)), blueNoiseJitter(ivec2(47, 59)));
     vec2 jitteredOffset = jitter * texelSize * 0.5;
 
-    // PCF (Percentage Closer Filtering) for soft shadows
+    // The reference the sampler compares each texel against, biased once here
+    // rather than per tap. A cleared texel sits at zero and the reference never
+    // falls below it, so an untouched map reads as lit without a test for it.
+    float reference = currentDepth + normalizedBias;
+
+    // PCF: every tap is a hardware 2x2 comparison, so the nine below cover a 4x4
+    // neighbourhood and come back already resolved to a lit fraction.
     float shadow = 0.0;
     for(int x = -1; x <= 1; ++x) {
         for(int y = -1; y <= 1; ++y) {
             vec2 sampleOffset = vec2(x, y) * texelSize + jitteredOffset;
-            vec2 sampleCoords = projCoords.xy + sampleOffset;
-            float pcfDepth = texture(u_shadowMap, vec3(sampleCoords, float(cascadeIndex))).r;
-            // Depth climbs toward the light, so an occluder reads deeper than what
-            // it stands over; 0 is the cleared far plane, holding nothing at all.
-            shadow += pcfDepth > 0. && (pcfDepth > currentDepth + normalizedBias) ? 0.0 : 1.0;
+            shadow += texture(u_shadowMap,
+                              vec4(projCoords.xy + sampleOffset, float(cascadeIndex),
+                                   reference));
         }
     }
     shadow /= 9.0; // Average the 9 samples

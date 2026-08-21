@@ -140,7 +140,6 @@ void GraphicsEngine::renderScene() {
     m_cdlodHandler->update(frameParams);
 
     unsigned int shadowMapTextureArray = 0;
-    std::vector<glm::dmat4> cascadeMatricesViewSpace;
 
     if (m_shadowsEnabled) {
         // Render shadow map

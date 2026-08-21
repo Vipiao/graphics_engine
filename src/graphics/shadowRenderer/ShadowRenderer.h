@@ -20,7 +20,6 @@ public:
                          unsigned int numCascades = 3,
                          const std::vector<double>& orthoSizes = {50.0, 200.0, 800.0},
                          double casterReach = 1000.0);
-    void resizeShadowMaps(unsigned int width, unsigned int height);
     
     // Fraction of its own radius each cascade's centre is pushed along the view
     // direction. Coverage behind the camera is never seen, so it is spent on reach

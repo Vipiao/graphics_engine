@@ -78,12 +78,20 @@ void ShadowRenderer::setupShadowMaps(unsigned int width, unsigned int height,
     glBindTexture(GL_TEXTURE_2D_ARRAY, m_shadowDepthTextureArray);
     glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH_COMPONENT32F, 
                  width, height, m_numCascades, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
-    //glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    //glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+
+    // The sampler compares before it filters. Read as plain depth, a linear tap
+    // averages four texels and compares once, against a depth no surface in the
+    // scene holds; comparing first and averaging the four outcomes is what a
+    // percentage-closer filter means. It also makes every tap a hardware 2x2, so
+    // the 3x3 grid below spans 4x4 texels at the cost of the 3x3. Greater-or-
+    // equal keeps the reverse-Z sense: the reference passes, and the texel reads
+    // as lit, unless something stands deeper than it toward the light.
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_FUNC, GL_GEQUAL);
     
     // Border reads as the far plane, which under reverse-Z is zero: a lookup
     // that lands outside the map finds nothing standing between it and the light.
@@ -106,13 +114,6 @@ void ShadowRenderer::setupShadowMaps(unsigned int width, unsigned int height,
     m_shadowMapInitialized = true;
 }
 
-void ShadowRenderer::resizeShadowMaps(unsigned int width, unsigned int height) {
-    // Preserve cascade configuration when resizing
-    std::vector<double> orthoSizes = m_cascadeOrthoSizes;
-    unsigned int numCascades = m_numCascades;
-    setupShadowMaps(width, height, numCascades, orthoSizes, m_casterReach);
-}
-
 void ShadowRenderer::cleanupShadowMap() {
     if (m_shadowMapInitialized) {
         glDeleteTextures(1, &m_shadowDepthTextureArray);
@@ -130,21 +131,15 @@ void ShadowRenderer::beginShadowPass(const glm::dvec3& lightDir, const glm::dvec
     // Calculate light position in L-space (camera-relative coordinates)
     glm::dvec3 lightDirNormalized = glm::normalize(lightDir);
 
-    // Generate deterministic jitter and project to plane perpendicular to light direction
-    glm::dvec3 jitter3D = Hash::pcgUnit3(frameNum) - glm::dvec3(0.5); // Center around 0
-    //glm::dvec3 jitterProjected = jitter3D - glm::dot(jitter3D, lightDirNormalized) * lightDirNormalized;
-    //
-    //// Scale by pixel size in finest cascade
-    //double pixelSize = m_cascadeOrthoSizes[0] / static_cast<double>(m_shadowMapWidth);
-    //glm::dvec3 jitter = jitterProjected * pixelSize;
-    //
-    double ll = glm::dot(jitter3D, jitter3D);
-    glm::dvec3 up = {0,1,0};
-    if (ll > 0.)
-    {
-        up = jitter3D / glm::sqrt(ll);
+    // A deterministic up vector, rerolled per frame, rolls the light basis about
+    // its own axis so the square rim of a cascade never sweeps the same texels
+    // twice. Any direction serves; only degeneracy has to be excluded.
+    const glm::dvec3 roll{Hash::pcgUnit3(frameNum) - glm::dvec3{0.5}};
+    const double rollLengthSquared{glm::dot(roll, roll)};
+    glm::dvec3 up{0.0, 1.0, 0.0};
+    if (rollLengthSquared > 0.0) {
+        up = roll / glm::sqrt(rollLengthSquared);
     }
-    
 
     // One light view per cascade, aimed at that cascade's own centre. Aiming at
     // the centre rather than at the camera keeps every distance the projection
@@ -161,10 +156,9 @@ void ShadowRenderer::beginShadowPass(const glm::dvec3& lightDir, const glm::dvec
     glBindFramebuffer(GL_FRAMEBUFFER, m_shadowMapFBO);
     glViewport(0, 0, m_shadowMapWidth, m_shadowMapHeight);
 
-    // Reverse-Z and the zero-to-one clip range are the context's, shared with the
-    // camera passes: the far plane is 0 and depth climbs toward the light, so a
-    // draw keeps the greatest depth and an empty texel clears to the far plane.
-    glClear(GL_DEPTH_BUFFER_BIT);
+    // Each cascade is cleared as bindCascadeLayer attaches it, so nothing is
+    // cleared here: the framebuffer still holds the whole array as one layered
+    // attachment, and a clear against that would cost every cascade at once.
     glEnable(GL_DEPTH_TEST);
 
     // Casters record the faces they turn to the light, so a shadow begins at the
@@ -187,7 +181,8 @@ void ShadowRenderer::bindCascadeLayer(unsigned int cascadeIndex) {
     glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, 
                               m_shadowDepthTextureArray, 0, cascadeIndex);
     
-    // Clear this cascade's depth buffer
+    // Clears to the far plane, which reverse-Z puts at zero: an untouched texel
+    // holds nothing between it and the light.
     glClear(GL_DEPTH_BUFFER_BIT);
 }
 

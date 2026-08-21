@@ -2,12 +2,21 @@
 #include "math/BlueNoise.h"
 #include "math/DekkerArithmetic.h"
 #include "utils/HashFunctions.h"
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <limits>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+
+namespace {
+// Length the lighting shader declares its per-cascade uniform arrays at. Every
+// upload below is clamped to it: a count past the declared length is rejected
+// draw by draw, and the cascade data never reaches the shader at all.
+constexpr size_t k_maxShaderCascades{4};
+}  // namespace
 
 DeferredRenderer::DeferredRenderer() {
     // Load lighting pass shaders
@@ -404,10 +413,10 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
     glUniform1i(glGetUniformLocation(lightingProgramID, "gDepth"), 3);
     
     // Bind shadow map texture. Unconditionally, even with no shadow map to
-    // bind: u_shadowMap is a sampler2DArray, and leaving it unassigned leaves it
-    // on unit 0 alongside gAlbedo's sampler2D. Two sampler types on one texture
-    // unit is invalid, and every draw of the pass would report it. Unit 4 with
-    // nothing bound simply samples black, which u_shadowsEnabled then ignores.
+    // bind: u_shadowMap is a sampler2DArrayShadow, and leaving it unassigned
+    // leaves it on unit 0 alongside gAlbedo's sampler2D. Two sampler types on one
+    // texture unit is invalid, and every draw of the pass would report it. Unit 4
+    // with nothing bound is never sampled, u_shadowsEnabled having returned first.
     glActiveTexture(GL_TEXTURE4);
     glBindTexture(GL_TEXTURE_2D_ARRAY, shadowMapTexture);
     glUniform1i(glGetUniformLocation(lightingProgramID, "u_shadowMap"), 4);
@@ -423,11 +432,12 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
         GLint lightSpaceMatricesLoc = glGetUniformLocation(lightingProgramID, "u_lightSpaceMatrices");
         if (lightSpaceMatricesLoc != -1 && cascadeMatrices.size() > 0) {
             // Convert double precision matrices to float for OpenGL
-            std::vector<glm::mat4> cascadeMatricesFloat(cascadeMatrices.size());
-            for (size_t i = 0; i < cascadeMatrices.size(); ++i) {
+            const size_t numMatrices{std::min(cascadeMatrices.size(), k_maxShaderCascades)};
+            std::array<glm::mat4, k_maxShaderCascades> cascadeMatricesFloat{};
+            for (size_t i = 0; i < numMatrices; ++i) {
                 cascadeMatricesFloat[i] = glm::mat4(cascadeMatrices[i]);
             }
-            glUniformMatrix4fv(lightSpaceMatricesLoc, static_cast<GLsizei>(cascadeMatricesFloat.size()),
+            glUniformMatrix4fv(lightSpaceMatricesLoc, static_cast<GLsizei>(numMatrices),
                              GL_FALSE, glm::value_ptr(cascadeMatricesFloat[0]));
         }
 
@@ -435,7 +445,7 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
         GLint cascadeBiasScalesLoc = glGetUniformLocation(lightingProgramID, "u_cascadeBiasScales");
         if (cascadeBiasScalesLoc != -1 && cascadeBiasScales.size() > 0) {
             // Ensure we don't exceed shader array size
-            size_t numScales = std::min(cascadeBiasScales.size(), static_cast<size_t>(4));
+            size_t numScales = std::min(cascadeBiasScales.size(), k_maxShaderCascades);
             glUniform1fv(cascadeBiasScalesLoc, static_cast<GLsizei>(numScales),
                         cascadeBiasScales.data());
         }
@@ -449,8 +459,11 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
         GLint cascadeOrthoSizesLoc = glGetUniformLocation(lightingProgramID, "u_cascadeOrthoSizes");
         if (cascadeOrthoSizesLoc != -1 && cascadeOrthoSizes.size() > 0) {
             // Convert double to float for OpenGL
-            std::vector<float> orthoSizesFloat(cascadeOrthoSizes.begin(), cascadeOrthoSizes.end());
-            size_t numSizes = std::min(orthoSizesFloat.size(), static_cast<size_t>(4));
+            const size_t numSizes{std::min(cascadeOrthoSizes.size(), k_maxShaderCascades)};
+            std::array<float, k_maxShaderCascades> orthoSizesFloat{};
+            for (size_t i = 0; i < numSizes; ++i) {
+                orthoSizesFloat[i] = static_cast<float>(cascadeOrthoSizes[i]);
+            }
             glUniform1fv(cascadeOrthoSizesLoc, static_cast<GLsizei>(numSizes),
                         orthoSizesFloat.data());
         }
