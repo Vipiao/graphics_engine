@@ -1,5 +1,6 @@
 // GraphicsEngine.cpp
 #include "GraphicsEngine.h"
+#include <glm/ext/matrix_clip_space.hpp>
 #include "GraphicsEngineBase.h"
 #include "GraphicsCallbacks.h"
 #include "SSBOManager.h"
@@ -63,7 +64,9 @@ GraphicsEngine::GraphicsEngine(
     // Create shadow renderer
     m_shadowRenderer = std::make_unique<ShadowRenderer>();
     //m_shadowRenderer->setupShadowMaps(8192, 8192, 3, {50.0, 200.0, 800.0});
-    m_shadowRenderer->setupShadowMaps(4096, 4096, 4, {8., 32.0, 128.0, 512.0});
+    // Cascade radii and caster reach are both scene-scale metres: the radii bound
+    // what each cascade shades, the reach how far off a caster may stand from it.
+    m_shadowRenderer->setupShadowMaps(4096, 4096, 4, {8., 64.0, 512.0, 4096.0}, 10000.0);
     //m_shadowRenderer->setupShadowMaps(4096, 4096, 4, {27., 81.0, 243.0, 729.0});
     //m_shadowRenderer->setupShadowMaps(4096, 4096, 3, {50.0, 200.0, 800.0});
     //m_shadowRenderer->setupShadowMaps(2048, 2048, 3, {50.0, 200.0, 800.0});
@@ -141,7 +144,11 @@ void GraphicsEngine::renderScene() {
 
     if (m_shadowsEnabled) {
         // Render shadow map
-        m_shadowRenderer->beginShadowPass(m_lightDirection, getCamPos(), getFrameNum());
+        // View direction in world axes: the view matrix's third row is the camera's
+        // backward, so negating it gives what the cascades are pushed along.
+        const glm::dvec3 camForward{-glm::dvec3{frameParams.view[0][2], frameParams.view[1][2],
+                                                frameParams.view[2][2]}};
+        m_shadowRenderer->beginShadowPass(m_lightDirection, camForward, getFrameNum());
         renderShadowPass();
         m_shadowRenderer->endShadowPass();
         
@@ -167,6 +174,7 @@ void GraphicsEngine::renderScene() {
         m_shadowRenderer->getLightSpaceMatricesForViewSpace(frameParams.view),
         m_shadowRenderer->getCascadeBiasScales(), // cascade bias scales
         m_shadowRenderer->getCascadeOrthoSizes(),
+        ShadowRenderer::k_cascadePush,    // how far each cascade centre is pushed
         shadowMapTextureArray,            // shadow map texture array
         m_shadowsEnabled                  // whether shadows are enabled
     );
@@ -203,9 +211,12 @@ void GraphicsEngine::renderScene() {
     // (Panini distortion + blue-noise dither).
     m_deferredRenderer->renderPostProcessing(frameParams);
 
-    // Render 2D overlay
+    // Render 2D overlay. Zero-to-one and reversed, as every projection here is:
+    // the overlay's own plane is z 0, which the swap puts at the near plane, in
+    // front of whatever the frame left in the depth buffer.
     float aspectRatio = getScreenWidth() / (float)getScreenHeight();
-    glm::mat4 projection2D = glm::ortho(-1.0f, 1.0f, -1.0f/aspectRatio, 1.0f/aspectRatio, 0.0f, 1.0f);
+    glm::mat4 projection2D = glm::orthoRH_ZO(-1.0f, 1.0f, -1.0f/aspectRatio,
+                                             1.0f/aspectRatio, 1.0f, 0.0f);
     m_meshManager2D->render(projection2D);
 }
 
@@ -231,6 +242,7 @@ void GraphicsEngine::renderShadowPass() {
         };
 
         // Render depth-only pass for shadow mapping. Only opaque objects cast shadows.
+        // The pass culls front faces for all three, set once in beginShadowPass.
         m_meshHandler->renderDepth(
             depthParams, /*renderOpaque=*/true, /*renderTransparent=*/false);
 

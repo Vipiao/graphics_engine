@@ -13,6 +13,7 @@ uniform int u_numCascades;
 uniform mat4 u_lightSpaceMatrices[4];
 uniform float u_cascadeBiasScales[4];
 uniform float u_cascadeOrthoSizes[4];
+uniform float u_cascadePush;
 uniform bool u_shadowsEnabled;
 uniform vec3 u_lightDir;
 uniform mat4 u_projection;
@@ -48,8 +49,9 @@ vec3 reconstructPosition(vec2 screenCoord, float depth) {
    // Convert screen coordinates to NDC
    vec2 ndc = screenCoord * 2.0 - 1.0;
    
-   // Create clip space coordinates
-   vec4 clipSpace = vec4(ndc, depth * 2.0 - 1.0, 1.0);
+   // Clip space is mapped zero-to-one, so the sampled depth is already the z it
+   // wants; only xy has to come across from texture coordinates.
+   vec4 clipSpace = vec4(ndc, depth, 1.0);
    
    // Transform to view space
    vec4 viewSpace = u_inverseProjection * clipSpace;
@@ -60,8 +62,9 @@ float reconstructPositionZ(vec2 screenCoord, float depth) {
    // Convert screen coordinates to NDC
    vec2 ndc = screenCoord * 2.0 - 1.0;
    
-   // Create clip space coordinates
-   vec4 clipSpace = vec4(ndc, depth * 2.0 - 1.0, 1.0);
+   // Clip space is mapped zero-to-one, so the sampled depth is already the z it
+   // wants; only xy has to come across from texture coordinates.
+   vec4 clipSpace = vec4(ndc, depth, 1.0);
    
    // Extract Z and W rows from the matrix and compute only what we need
    vec4 zRow = vec4(u_inverseProjection[0].z, u_inverseProjection[1].z, u_inverseProjection[2].z, u_inverseProjection[3].z);
@@ -139,44 +142,44 @@ float calculateSSAO(vec3 fragPos, vec3 normal) {
    return occlusion;
 }
 
-int selectCascade(vec3 fragPos) {
-    // Add temporal jitter to fragPos to reduce aliasing
-    float jitter = blueNoiseJitter(ivec2(13, 41));
-    fragPos *= (1.0 + abs(jitter) * 0.25);
-    
-    // Calculate distance from camera (Euclidean distance in view space)
-    float distanceFromCamera = length(fragPos);
-    
-    // Calculate margin as 1 texel to avoid edge artifacts
-    ivec3 texSize = textureSize(u_shadowMap, 0);
-    float baseMargin = 1.0 / float(texSize.x);
-    
-    // Try cascades from highest to lowest resolution (0 is highest detail)
-    for (int i = 0; i < u_numCascades; ++i) {
-        // Check if distance allows this cascade level
-        float cascadeDistance = u_cascadeOrthoSizes[i] * 2.0;
-        bool distanceAllowsCascade = (i == u_numCascades - 1) || 
-                                      (distanceFromCamera < cascadeDistance);
-        
-        if (!distanceAllowsCascade) {
-            continue;  // Skip to coarser cascade
-        }
+// Fraction of a cascade's reach given over to the fade into the next cascade
+// out. Radial, so a roll of the light basis slides no part of it.
+const float k_cascadeFadeBand = 0.20;
 
-        // Transform fragment position to this cascade's light space
-        vec4 fragPosLightSpace = u_lightSpaceMatrices[i] * vec4(fragPos, 1.0);
-        vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-        projCoords = projCoords * 0.5 + 0.5;
-        
-        // Check if coordinates are inside [baseMargin, 1-baseMargin] range
-        if (projCoords.x > baseMargin && projCoords.x < (1.0 - baseMargin) &&
-            projCoords.y > baseMargin && projCoords.y < (1.0 - baseMargin)) {
-            return i;  // Use this cascade
+// Cascade to sample, and how far the fragment sits into that cascade's fade
+// band: 0 well inside it, rising to 1 at the cascade's edge.
+struct CascadeChoice {
+    int index;
+    float fade;
+};
+
+// Finest cascade whose sphere still holds the fragment. The sphere of a cascade's
+// ortho size is inscribed in its box: inside that sphere is inside the box however
+// the box is rolled about the light axis, and the boundary is round, so the roll
+// never moves it. Both are pushed along the view direction by the same amount, so
+// the fragment has to be measured from the centre the projection was built around.
+CascadeChoice selectCascade(vec3 fragPos) {
+    for (int i = 0; i < u_numCascades; ++i) {
+        float size = u_cascadeOrthoSizes[i];
+        // View space looks down -z, so that is the direction the centres go.
+        vec3 centre = vec3(0.0, 0.0, -u_cascadePush * size);
+        float radius = length(fragPos - centre) / size;
+        if (radius < 1.0) {
+            return CascadeChoice(i, smoothstep(1.0 - k_cascadeFadeBand, 1.0, radius));
         }
     }
-    
+
     // Outside all cascades
-    return -1;
+    return CascadeChoice(-1, 0.0);
 }
+
+// Shadow-map texels the lookup slides along the surface normal. Wide enough to
+// carry the 3x3 PCF footprint clear of the surface it is standing on.
+const float k_normalOffsetTexels = 2.0;
+
+// What the normal offset leaves behind, in half-texels of depth. Reverse-Z keeps
+// quantisation far below this, so it only has to cover the residue.
+const float k_depthBiasTexels = 2.0;
 
 float calculateShadow(
    vec3 fragPos, vec3 normal, vec3 lightDir, int cascadeIndex
@@ -184,59 +187,57 @@ float calculateShadow(
     if (!u_shadowsEnabled) {
         return 1.0; // No shadow
     }
-    
+
     if (cascadeIndex < 0) {
         return 1.0; // Outside all cascades, no shadow
     }
-    
-    // Calculate normalized bias: cascadeBiasScales already includes depth range normalization
-    float dd = abs(dot(normal, lightDir));
-    float worldSpaceBias = 1.0 + 16. * (1. - dd);
-    float normalizedBias = worldSpaceBias * u_cascadeBiasScales[cascadeIndex];
-    //cascadeIndex = 1;
-    
-    // Transform fragment position to selected cascade's light space
-    vec4 fragPosLightSpace = u_lightSpaceMatrices[cascadeIndex] * vec4(fragPos, 1.0);
-    
-    // Perform perspective divide
+
+    vec2 texelSize = 1.0 / vec2(textureSize(u_shadowMap, 0).xy);
+    float texelWorld = 2.0 * u_cascadeOrthoSizes[cascadeIndex] * texelSize.x;
+
+    // Slide the lookup along the surface instead of pushing its depth away from
+    // the light: none when the surface faces the light, all of it when the surface
+    // runs along it, which is what the sine measures. Bounded by a texel however
+    // the surface leans, where a depth push would grow as 1/tan and tear the
+    // shadow off the contact it belongs to.
+    float ndotl = clamp(dot(normal, lightDir), 0.0, 1.0);
+    float slide = sqrt(1.0 - ndotl * ndotl);
+    vec3 samplePos = fragPos + normal * (k_normalOffsetTexels * texelWorld * slide);
+
+    vec4 fragPosLightSpace = u_lightSpaceMatrices[cascadeIndex] * vec4(samplePos, 1.0);
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    
-    // Transform to [0,1] range
-    projCoords = projCoords * 0.5 + 0.5;
-    
+
+    // Clip space is mapped zero-to-one for this pass, so only xy still needs the
+    // half-scale into texture space; z already reads as the depth the map holds.
+    projCoords.xy = projCoords.xy * 0.5 + 0.5;
+
     // Check if fragment is outside shadow map bounds
     if (projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) {
         return 1.0; // Outside shadow map, assume no shadow
     }
-    
-    // Get current fragment depth in light space
+
     float currentDepth = projCoords.z;
+    float normalizedBias = k_depthBiasTexels * u_cascadeBiasScales[cascadeIndex];
 
     // Blue noise jitter (animated per frame through the noise offset) turns
     // the PCF grid into a soft penumbra without visible noise clumps.
     vec2 jitter = vec2(blueNoiseJitter(ivec2(29, 7)), blueNoiseJitter(ivec2(47, 59)));
-    vec2 texelSize = 1.0 / vec2(textureSize(u_shadowMap, 0).xy);
-    vec2 jitteredOffset = jitter * texelSize; // Scale to texel size
-    jitteredOffset *= 0.5;
-    jitteredOffset *= 1. + 1.*(1. - dd);
-    //debugColor.x = jitteredOffset.x*4000.;
+    vec2 jitteredOffset = jitter * texelSize * 0.5;
 
     // PCF (Percentage Closer Filtering) for soft shadows
     float shadow = 0.0;
     for(int x = -1; x <= 1; ++x) {
-    //for(int x = 0; x < 1; ++x) {
         for(int y = -1; y <= 1; ++y) {
-        //for(int y = 0; y < 1; ++y) {
-            // Apply both PCF offset and temporal jitter
             vec2 sampleOffset = vec2(x, y) * texelSize + jitteredOffset;
             vec2 sampleCoords = projCoords.xy + sampleOffset;
             float pcfDepth = texture(u_shadowMap, vec3(sampleCoords, float(cascadeIndex))).r;
-            shadow += pcfDepth < 1. && (currentDepth - normalizedBias > pcfDepth) ? 0.0 : 1.0;
+            // Depth climbs toward the light, so an occluder reads deeper than what
+            // it stands over; 0 is the cleared far plane, holding nothing at all.
+            shadow += pcfDepth > 0. && (pcfDepth > currentDepth + normalizedBias) ? 0.0 : 1.0;
         }
     }
     shadow /= 9.0; // Average the 9 samples
-    //if(shadow < 0.7) debugColor.x = 1.;
-    
+
     return shadow;
 }
 
@@ -376,8 +377,16 @@ void main() {
    float attenuation = 1.0;
    
    // Calculate shadow factor
-   int cascadeIndex = selectCascade(fragPos);
-   float shadowFactor = calculateShadow(fragPos, normal, lightDir, cascadeIndex);
+   CascadeChoice cascade = selectCascade(fragPos);
+   float shadowFactor = calculateShadow(fragPos, normal, lightDir, cascade.index);
+   if (cascade.fade > 0.0) {
+      // Toward the rim, cross-fade into the next cascade out. Past the last one
+      // there is nothing coarser left to reach for, so fade to unshadowed.
+      float outerShadow = cascade.index + 1 < u_numCascades
+         ? calculateShadow(fragPos, normal, lightDir, cascade.index + 1)
+         : 1.0;
+      shadowFactor = mix(shadowFactor, outerShadow, cascade.fade);
+   }
    //shadowFactor = 1.;
 
    // Phong lighting model: SSAO darkens the ambient term fully and the

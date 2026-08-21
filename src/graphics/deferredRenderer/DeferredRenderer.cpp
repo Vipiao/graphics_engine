@@ -290,9 +290,9 @@ void DeferredRenderer::beginGeometryPass() {
     glBindFramebuffer(GL_FRAMEBUFFER, m_gbufferFBO);
     glViewport(0, 0, m_gbufferWidth, m_gbufferHeight);
 
-    // Depth state for the geometry draws of this pass
+    // Depth state for the geometry draws of this pass. The comparison is the
+    // reverse-Z GEQUAL every pass here shares, set once with the context.
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
 
     // Clear each buffer with appropriate values
     glClearBufferfv(GL_COLOR, 0, glm::value_ptr(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f))); // Albedo: black
@@ -307,6 +307,7 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
     const std::vector<glm::dmat4>& cascadeMatrices,
     const std::vector<float>& cascadeBiasScales,
     const std::vector<double>& cascadeOrthoSizes,
+    double cascadePush,
     unsigned int shadowMapTexture,
     bool shadowsEnabled)
 {
@@ -348,9 +349,11 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
     glUniform1i(glGetUniformLocation(lightingProgramID, "u_blueNoise"), 5);
     setBlueNoiseOffset(lightingProgramID, params.frame);
 
-    // Set inverse projection matrix for position reconstruction
-    glm::mat4 projectionFloat = glm::mat4(params.projection);
-    glm::mat4 inverseProjection = glm::inverse(projectionFloat);
+    // Set inverse projection matrix for position reconstruction. Inverted at full
+    // width and narrowed after: inverting in float first would spend the precision
+    // the reverse-Z depth buffer was arranged to keep.
+    glm::mat4 projectionFloat{ params.projection };
+    glm::mat4 inverseProjection{ glm::inverse(params.projection) };
     GLint inverseProjectionLoc = glGetUniformLocation(lightingProgramID, "u_inverseProjection");
     if (inverseProjectionLoc != -1) {
         glUniformMatrix4fv(inverseProjectionLoc, 1, GL_FALSE, glm::value_ptr(inverseProjection));
@@ -435,6 +438,11 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
             size_t numScales = std::min(cascadeBiasScales.size(), static_cast<size_t>(4));
             glUniform1fv(cascadeBiasScalesLoc, static_cast<GLsizei>(numScales),
                         cascadeBiasScales.data());
+        }
+
+        GLint cascadePushLoc = glGetUniformLocation(lightingProgramID, "u_cascadePush");
+        if (cascadePushLoc != -1) {
+            glUniform1f(cascadePushLoc, static_cast<float>(cascadePush));
         }
 
         // Pass cascade ortho sizes array

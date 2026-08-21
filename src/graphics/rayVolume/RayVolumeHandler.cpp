@@ -216,7 +216,9 @@ void RayVolumeHandler::render(const FrameRenderParams& params,
                               unsigned int screenWidth, unsigned int screenHeight) {
     if (m_volumes.empty()) return;
 
-    const glm::mat4 inverseProjection{ glm::inverse(glm::mat4{ params.projection }) };
+    // Inverted at full width and narrowed after, as the lighting pass does: a
+    // float inverse spends the precision reverse-Z was arranged to keep.
+    const glm::mat4 inverseProjection{ glm::inverse(params.projection) };
 
     for (size_t materialIndex = 0; materialIndex < m_materials.size(); ++materialIndex) {
         // Skip materials with no visible instances this frame.

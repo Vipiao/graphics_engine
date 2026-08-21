@@ -1,4 +1,6 @@
 #include "GraphicsEngineBase.h"
+#include "ClipControl.h"
+#include <glm/ext/matrix_clip_space.hpp>
 #include "utils/TimeHandler.h"
 #include <cassert>
 #include "math/PaniniProjection.h"
@@ -132,8 +134,19 @@ GraphicsEngineBase::GraphicsEngineBase(TimeHandler* timeHandler, Mode mode,
       throw "Failed to initialize GLAD";
    }
 
+   // Past where glad's headers stop, so it is resolved from the same loader.
+   clipControl::load(reinterpret_cast<clipControl::LoadProc>(glfwGetProcAddress));
+
    // Clobal configuration.
    setSwapInterval(m_swapInterval);
+
+   // Reverse-Z, everywhere: depth runs from 1 at the near plane down to 0 at the
+   // far one, so a draw keeps the greatest depth and an untouched pixel clears to
+   // the far plane. Clip space is mapped zero-to-one to go with it -- folding the
+   // range out of minus-one would cost exactly the bits near zero this is for.
+   clipControl::setDepthMode(clipControl::k_zeroToOne);
+   glClearDepth(0.0);
+   glDepthFunc(GL_GEQUAL);
    glEnable(GL_DEPTH_TEST);
    glEnable(GL_CULL_FACE);
    //glPolygonMode (GL_FRONT_AND_BACK, GL_LINE);
@@ -247,9 +260,10 @@ glm::dmat4 GraphicsEngineBase::getViewMatrix() const {
 // Where the frustum begins and ends, in metres. Far is set by the largest body
 // the scene must hold, since anything past it is not clipped gracefully but gone.
 //
-// Only the near plane costs precision: a surface at distance d lands at
-// 1 - near/d, so the metres one float32 depth step covers grow as d^2 / near and
-// far barely enters. Pulling it out leaves close geometry exactly as precise.
+// Neither plane costs much precision under reverse-Z. A surface at distance d
+// lands at near/d, where float32 spends its exponent, and the hyperbola the
+// projection writes is near enough the reciprocal of the one the format reads:
+// what one crowds toward the near plane the other spreads back out.
 static constexpr double k_nearPlaneMetres{0.1};
 static constexpr double k_farPlaneMetres{1.0e8};
 
@@ -258,8 +272,9 @@ glm::dmat4 GraphicsEngineBase::getProjectionMatrix() const {
 
    // Set m_fieldOfView as horizontal field of view.
    double fieldOfViewVertical = 2.0 * atan(tan(m_fieldOfView / 2.0) / aspectRatio);
-   return glm::perspective(fieldOfViewVertical, aspectRatio, k_nearPlaneMetres,
-                           k_farPlaneMetres);
+   // Near and far handed over swapped: that is the reverse-Z mapping.
+   return glm::perspectiveRH_ZO(fieldOfViewVertical, aspectRatio, k_farPlaneMetres,
+                                k_nearPlaneMetres);
 }
 
 double GraphicsEngineBase::getAspectRatio() const {

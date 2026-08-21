@@ -35,6 +35,7 @@ public:
         const std::vector<glm::dmat4>& cascadeMatrices,
         const std::vector<float>& cascadeBiasScales,
         const std::vector<double>& cascadeOrthoSizes,
+        double cascadePush,
         unsigned int shadowMapTexture = 0,
         bool shadowsEnabled = false);
 

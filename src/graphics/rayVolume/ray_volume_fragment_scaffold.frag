@@ -44,7 +44,7 @@ struct RayVolumeResult {
 float sceneViewDepth() {
    vec2 uv = gl_FragCoord.xy / u_screenSize;
    float d = texelFetch(u_sceneDepth, ivec2(gl_FragCoord.xy), 0).r;
-   vec4 ndc = vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
+   vec4 ndc = vec4(uv * 2.0 - 1.0, d, 1.0);
    vec4 viewH = u_inverseProjection * ndc;
    return -(viewH.z / viewH.w);
 }

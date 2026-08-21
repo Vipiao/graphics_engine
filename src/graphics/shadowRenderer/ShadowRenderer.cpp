@@ -1,6 +1,7 @@
 #include "ShadowRenderer.h"
 #include <iostream>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/ext/matrix_clip_space.hpp>
 #include "utils/HashFunctions.h"
 #include <stdexcept>
 
@@ -14,7 +15,8 @@ ShadowRenderer::~ShadowRenderer() {
 
 void ShadowRenderer::setupShadowMaps(unsigned int width, unsigned int height,
                                      unsigned int numCascades,
-                                     const std::vector<double>& orthoSizes) {
+                                     const std::vector<double>& orthoSizes,
+                                     double casterReach) {
     if (m_shadowMapInitialized) {
         cleanupShadowMap();
     }
@@ -23,6 +25,7 @@ void ShadowRenderer::setupShadowMaps(unsigned int width, unsigned int height,
     m_shadowMapHeight = height;
     m_numCascades = numCascades;
     m_cascadeOrthoSizes = orthoSizes;
+    m_casterReach = casterReach;
     
     // Ensure we have ortho sizes for all cascades
     if (m_cascadeOrthoSizes.size() < m_numCascades) {
@@ -33,31 +36,34 @@ void ShadowRenderer::setupShadowMaps(unsigned int width, unsigned int height,
         }
     }
 
-    // Calculate near and far planes
-    double nearPlane = 0.1;
-    double farPlane = m_shadowDistance * 2.0;
-    
     // Pre-calculate projection matrices (these don't change between frames)
     m_cascadeProjectionMatrices.resize(m_numCascades);
-    for (unsigned int i = 0; i < m_numCascades; ++i) {
-        double orthoSize = m_cascadeOrthoSizes[i];
-        m_cascadeProjectionMatrices[i] = glm::ortho(
-            -orthoSize, orthoSize,
-            -orthoSize, orthoSize,
-            nearPlane, farPlane
-        );
-    }
-
-    // Calculate depth range for bias calculations
-    double depthRange = farPlane - nearPlane;
-
-    // Pre-calculate bias scales for each cascade including depth range
-    // Scale is (orthoSize / resolution) / depthRange
     m_cascadeBiasScales.resize(m_numCascades);
     for (unsigned int i = 0; i < m_numCascades; ++i) {
-        double resolutionScale = static_cast<double>(width);
-        double orthoScale = m_cascadeOrthoSizes[i];
-        m_cascadeBiasScales[i] = static_cast<float>((orthoScale / resolutionScale) / depthRange);
+        const double orthoSize{m_cascadeOrthoSizes[i]};
+
+        // The light stands at the near plane, one caster reach back, and a receiver
+        // runs one cascade radius past the camera and no further. So only the far
+        // plane follows the cascade; the near plane holds the shared reach, which
+        // is what lets a distant occluder shadow what stands right at the camera
+        // even in the finest cascade.
+        const double farPlane{m_casterReach + orthoSize};
+
+        // Near and far handed over swapped: that is the reverse-Z mapping. Depth
+        // counts from 0 at the far plane up to 1 at the light, landing the camera
+        // end of the slab -- all the fine cascades care about -- where float32
+        // still has its exponent, and its precision.
+        m_cascadeProjectionMatrices[i] = glm::orthoRH_ZO(
+            -orthoSize, orthoSize,
+            -orthoSize, orthoSize,
+            farPlane, 0.0
+        );
+
+        // Half a texel of world distance, expressed in the depth units of this
+        // cascade's own slab.
+        const double depthRange{farPlane};
+        m_cascadeBiasScales[i] =
+            static_cast<float>((orthoSize / static_cast<double>(width)) / depthRange);
     }
     
     // Initialize light space matrices storage
@@ -79,8 +85,9 @@ void ShadowRenderer::setupShadowMaps(unsigned int width, unsigned int height,
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
     
-    // Set border color to maximum depth (white/far plane)
-    float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    // Border reads as the far plane, which under reverse-Z is zero: a lookup
+    // that lands outside the map finds nothing standing between it and the light.
+    float borderColor[] = { 0.0f, 0.0f, 0.0f, 0.0f };
     glTexParameterfv(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BORDER_COLOR, borderColor);
     
     // Attach depth texture array to framebuffer (base level)
@@ -103,7 +110,7 @@ void ShadowRenderer::resizeShadowMaps(unsigned int width, unsigned int height) {
     // Preserve cascade configuration when resizing
     std::vector<double> orthoSizes = m_cascadeOrthoSizes;
     unsigned int numCascades = m_numCascades;
-    setupShadowMaps(width, height, numCascades, orthoSizes);
+    setupShadowMaps(width, height, numCascades, orthoSizes, m_casterReach);
 }
 
 void ShadowRenderer::cleanupShadowMap() {
@@ -114,7 +121,8 @@ void ShadowRenderer::cleanupShadowMap() {
     }
 }
 
-void ShadowRenderer::beginShadowPass(const glm::dvec3& lightDir, const glm::dvec3& /* camPos */, uint64_t frameNum) {
+void ShadowRenderer::beginShadowPass(const glm::dvec3& lightDir, const glm::dvec3& camForward,
+                                    uint64_t frameNum) {
     if (!m_shadowMapInitialized) {
         throw std::runtime_error("Shadow map not initialized. Call setupShadowMap() first.");
     }
@@ -130,8 +138,6 @@ void ShadowRenderer::beginShadowPass(const glm::dvec3& lightDir, const glm::dvec
     //double pixelSize = m_cascadeOrthoSizes[0] / static_cast<double>(m_shadowMapWidth);
     //glm::dvec3 jitter = jitterProjected * pixelSize;
     //
-    glm::dvec3 lightPosL = -lightDirNormalized * m_shadowDistance;
-    //lightPosL += jitter*100.;
     double ll = glm::dot(jitter3D, jitter3D);
     glm::dvec3 up = {0,1,0};
     if (ll > 0.)
@@ -140,34 +146,32 @@ void ShadowRenderer::beginShadowPass(const glm::dvec3& lightDir, const glm::dvec
     }
     
 
-    // Create light view matrix in L-space
-    glm::dmat4 lightView = glm::lookAt(
-        lightPosL,
-        glm::dvec3(0.0, 0.0, 0.0),  // Look at origin (camera in L-space)
-        up
-    );
-    
-    // Combine pre-calculated projections with view matrix
+    // One light view per cascade, aimed at that cascade's own centre. Aiming at
+    // the centre rather than at the camera keeps every distance the projection
+    // measures taken from the same point, so near, far and the bias all hold.
+    const glm::dvec3 forward{glm::normalize(camForward)};
     for (unsigned int i = 0; i < m_numCascades; ++i) {
+        const glm::dvec3 centre{forward * (k_cascadePush * m_cascadeOrthoSizes[i])};
+        const glm::dmat4 lightView{
+            glm::lookAt(centre - lightDirNormalized * m_casterReach, centre, up)};
         m_lightSpaceMatrices[i] = m_cascadeProjectionMatrices[i] * lightView;
     }
     
     // Bind shadow map framebuffer for depth rendering
     glBindFramebuffer(GL_FRAMEBUFFER, m_shadowMapFBO);
     glViewport(0, 0, m_shadowMapWidth, m_shadowMapHeight);
-    
-    // Clear depth buffer
+
+    // Reverse-Z and the zero-to-one clip range are the context's, shared with the
+    // camera passes: the far plane is 0 and depth climbs toward the light, so a
+    // draw keeps the greatest depth and an empty texel clears to the far plane.
     glClear(GL_DEPTH_BUFFER_BIT);
-    
-    // Depth state for the depth draws of this pass, LEQUAL consistent with
-    // the camera-view passes
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
-    
-    // Optional: Enable front face culling to reduce peter panning
-    // (render back faces to shadow map to push shadows away from surfaces)
+
+    // Casters record the faces they turn to the light, so a shadow begins at the
+    // surface that cast it rather than however far past that the caster ends. What
+    // it asks in return is a bias wide enough that a lit surface does not read as
+    // its own occluder.
     glEnable(GL_CULL_FACE);
-    //glCullFace(GL_FRONT);
     glCullFace(GL_BACK);
 }
 
@@ -202,7 +206,8 @@ std::vector<glm::dmat4> ShadowRenderer::getLightSpaceMatricesForViewSpace(const 
 }
 
 void ShadowRenderer::endShadowPass() {
-    // Restore default settings
+    // Only the cull face was this pass's to change; the depth convention is the
+    // context's and the camera passes want it exactly as it stands.
     glCullFace(GL_BACK);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
