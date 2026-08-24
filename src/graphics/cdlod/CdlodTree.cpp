@@ -161,7 +161,8 @@ void CdlodTree::visitNode(int32_t nodeIndex, const CdlodPatchFrame& frame, int d
     }
 
     if (!hasChildren) {
-        leaves.push_back(CdlodLeaf{frame, depth, bounds.m_frameScale});
+        leaves.push_back(CdlodLeaf{frame, depth, bounds.m_frameScale, bounds.m_centre,
+                                   bounds.m_radius});
         return;
     }
 

@@ -23,4 +23,9 @@ struct FrameRenderParams {
    // Blue-noise dither amplitude added in the post-processing pass before the
    // final 8-bit quantization, in color units. 0 = off; 1/255 covers one step.
    double ditherStrength{ 0.0 };
+   // The shadow cascade this pass fills. A handler that grouped its work into
+   // caster tiers draws tiers 0 through k for cascade k; one that did not draws
+   // everything either way. All bits set clamps past the last tier, which is the
+   // whole grouping: what every camera pass asks for by leaving this alone.
+   unsigned int casterTier{ ~0u };
 };

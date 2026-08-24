@@ -1,5 +1,5 @@
 #include "ShadowRenderer.h"
-#include <iostream>
+#include <cassert>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/ext/matrix_clip_space.hpp>
 #include "utils/HashFunctions.h"
@@ -27,12 +27,26 @@ void ShadowRenderer::setupShadowMaps(unsigned int width, unsigned int height,
     m_cascadeOrthoSizes = orthoSizes;
     m_casterReach = casterReach;
     
-    // Ensure we have ortho sizes for all cascades
+    // Every one of these is a scene-scale length the caller chose, and a wrong one
+    // shows up as shadows that are subtly absent rather than as a crash. Rejected
+    // here, where the number is still next to the name it was given.
+    if (m_numCascades == 0) {
+        throw std::runtime_error("setupShadowMaps: no cascades");
+    }
     if (m_cascadeOrthoSizes.size() < m_numCascades) {
-        std::cerr << "Warning: Not enough ortho sizes provided, using defaults" << std::endl;
-        m_cascadeOrthoSizes.resize(m_numCascades);
-        for (unsigned int i = 0; i < m_numCascades; ++i) {
-            m_cascadeOrthoSizes[i] = 50.0 * (1 << (i * 2)); // 50, 200, 800...
+        throw std::runtime_error("setupShadowMaps: fewer ortho sizes than cascades");
+    }
+    if (casterReach <= 0.0) {
+        throw std::runtime_error("setupShadowMaps: caster reach must be positive");
+    }
+    for (unsigned int i = 0; i < m_numCascades; ++i) {
+        if (m_cascadeOrthoSizes[i] <= 0.0) {
+            throw std::runtime_error("setupShadowMaps: cascade ortho sizes must be positive");
+        }
+        // Each cascade hands off to the next at its own radius, so a list that does
+        // not grow leaves a band nothing covers.
+        if (i > 0 && m_cascadeOrthoSizes[i] <= m_cascadeOrthoSizes[i - 1]) {
+            throw std::runtime_error("setupShadowMaps: cascade ortho sizes must increase");
         }
     }
 
@@ -68,6 +82,7 @@ void ShadowRenderer::setupShadowMaps(unsigned int width, unsigned int height,
     
     // Initialize light space matrices storage
     m_lightSpaceMatrices.resize(m_numCascades);
+    m_casterVolumes.resize(m_numCascades);
     
     // Create framebuffer
     glGenFramebuffers(1, &m_shadowMapFBO);
@@ -122,18 +137,24 @@ void ShadowRenderer::cleanupShadowMap() {
     }
 }
 
-void ShadowRenderer::beginShadowPass(const glm::dvec3& lightDir, const glm::dvec3& camForward,
-                                    uint64_t frameNum) {
+void ShadowRenderer::updateCascades(const glm::dvec3& lightDir, const glm::dvec3& camForward,
+                                   uint64_t frameNum) {
     if (!m_shadowMapInitialized) {
         throw std::runtime_error("Shadow map not initialized. Call setupShadowMap() first.");
     }
+    assert(m_casterReach > 0.0 && "Caster reach unset: cascades placed before setupShadowMaps");
+    assert(glm::length(lightDir) > 0.0 && "Light direction has no direction to normalize");
+    assert(glm::length(camForward) > 0.0 && "View direction has no direction to normalize");
 
     // Calculate light position in L-space (camera-relative coordinates)
     glm::dvec3 lightDirNormalized = glm::normalize(lightDir);
 
-    // A deterministic up vector, rerolled per frame, rolls the light basis about
-    // its own axis so the square rim of a cascade never sweeps the same texels
-    // twice. Any direction serves; only degeneracy has to be excluded.
+    // A deterministic up vector, rerolled per frame, turns the texel lattice about
+    // the light axis so the staircase along a shadow edge lands somewhere new each
+    // frame instead of standing still. What a cascade covers does not move with it:
+    // the lighting pass takes each one out to the sphere inscribed in this square,
+    // which no roll of the square can reach. Any direction serves as the up vector;
+    // only degeneracy has to be excluded.
     const glm::dvec3 roll{Hash::pcgUnit3(frameNum) - glm::dvec3{0.5}};
     const double rollLengthSquared{glm::dot(roll, roll)};
     glm::dvec3 up{0.0, 1.0, 0.0};
@@ -144,14 +165,28 @@ void ShadowRenderer::beginShadowPass(const glm::dvec3& lightDir, const glm::dvec
     // One light view per cascade, aimed at that cascade's own centre. Aiming at
     // the centre rather than at the camera keeps every distance the projection
     // measures taken from the same point, so near, far and the bias all hold.
+    //
+    // The volume a cascade can be shadowed by is built from the same three numbers
+    // in the same turn of the loop, so what is culled against and what is drawn
+    // into cannot describe different cascades.
     const glm::dvec3 forward{glm::normalize(camForward)};
     for (unsigned int i = 0; i < m_numCascades; ++i) {
-        const glm::dvec3 centre{forward * (k_cascadePush * m_cascadeOrthoSizes[i])};
+        const double orthoSize{m_cascadeOrthoSizes[i]};
+        const glm::dvec3 centre{forward * (k_cascadePush * orthoSize)};
         const glm::dmat4 lightView{
             glm::lookAt(centre - lightDirNormalized * m_casterReach, centre, up)};
         m_lightSpaceMatrices[i] = m_cascadeProjectionMatrices[i] * lightView;
+
+        m_casterVolumes[i] = Cylinder{lightDirNormalized, centre, orthoSize,
+                                      -m_casterReach, orthoSize};
     }
-    
+}
+
+void ShadowRenderer::beginShadowPass() {
+    if (!m_shadowMapInitialized) {
+        throw std::runtime_error("Shadow map not initialized. Call setupShadowMap() first.");
+    }
+
     // Bind shadow map framebuffer for depth rendering
     glBindFramebuffer(GL_FRAMEBUFFER, m_shadowMapFBO);
     glViewport(0, 0, m_shadowMapWidth, m_shadowMapHeight);

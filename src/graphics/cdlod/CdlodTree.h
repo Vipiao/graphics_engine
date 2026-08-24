@@ -21,6 +21,11 @@ struct CdlodLeaf {
     // Carried out so the vertex stage sizes the patch the way the split test did;
     // recovering it downstream would mean bounding the patch again.
     double m_frameScale{1.0};
+    // Where the leaf lands once drawn, for the same reason and at the same price:
+    // the traversal held this to measure the split against, and asking the body
+    // for it again costs a surface evaluation per leaf per frame.
+    glm::dvec3 m_boundsCentre{0.0};
+    double m_boundsRadius{0.0};
 };
 
 /**

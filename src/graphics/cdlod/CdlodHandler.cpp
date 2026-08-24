@@ -5,8 +5,10 @@
 #include "../TextureStore.h"
 #include "../InstanceFrameUniforms.h"
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <stdexcept>
+#include <glm/gtc/epsilon.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include "math/DekkerArithmetic.h"
 
@@ -69,9 +71,11 @@ CdlodBodyPose bodyRenderPose(const MeshTransform& transform,
     // A true inverse, not a transpose: narrowing to float leaves the rotation a
     // part in ten million off orthonormal, worth half a metre of camera position
     // at a planet's radius.
-    const glm::dvec3 rotated{glm::inverse(bodyRotation) * relative};
+    const glm::dmat3 inverseBodyRotation{glm::inverse(bodyRotation)};
+    const glm::dvec3 rotated{inverseBodyRotation * relative};
 
-    return CdlodBodyPose{bodyRotation, (rotated + transform.centerOfRotation) / scale};
+    return CdlodBodyPose{bodyRotation, (rotated + transform.centerOfRotation) / scale,
+                         inverseBodyRotation, scale};
 }
 
 // Splits a body-sized value into the float pair the vertex stage reads as one
@@ -85,6 +89,42 @@ std::pair<glm::vec3, glm::vec3> splitWide(const glm::dvec3& value) {
     const DekkerFloat::DekkerNumber z{value.z};
 
     return {glm::vec3{x.main, y.main, z.main}, glm::vec3{x.error, y.error, z.error}};
+}
+
+// How much a patch's bounding sphere is widened before it is measured against a
+// caster volume. A body bounds its patches on the shape they stand on rather than
+// the shape they are drawn as, so terrain wandering across a patch can leave its
+// own ball; the margin is proportional because that wandering scales with the
+// patch. Too small drops a caster and loses a shadow the cascade fade will not
+// cover -- that band blends receivers, and the loss is up-light of them. Too large
+// only draws patches that clip away.
+constexpr double k_casterBoundsMargin{1.5};
+
+// A caster volume as the body's own frame sees it. Four of these against thousands
+// of patches, so it is the volumes that are carried across rather than the bounds.
+Cylinder volumeInBodySpace(const Cylinder& volume, const CdlodBodyPose& pose) {
+    assert(glm::all(glm::epsilonEqual(pose.m_scale, glm::dvec3{pose.m_scale.x}, 1e-12)) &&
+           "Non-uniform scale: a bounding sphere would not stay one in the body's frame");
+    const double scale{pose.m_scale.x};
+
+    return Cylinder{glm::normalize(pose.m_inverseBodyRotation * volume.m_axis),
+                    pose.m_cameraBodyPosition +
+                        (pose.m_inverseBodyRotation * volume.m_centre) / scale,
+                    volume.m_radius / scale, volume.m_axialMin / scale,
+                    volume.m_axialMax / scale};
+}
+
+// The innermost volume a patch can cast into, or one past the last if it casts into
+// none. They only nearly nest -- a shared caster reach runs from centres that do not
+// coincide -- so every volume is tested, not just the outermost.
+unsigned int casterTier(const std::vector<Cylinder>& bodyVolumes, const glm::dvec3& centre,
+                        double radius) {
+    for (size_t tier{0}; tier < bodyVolumes.size(); ++tier) {
+        if (intersectsSphere(bodyVolumes[tier], centre, radius)) {
+            return static_cast<unsigned int>(tier);
+        }
+    }
+    return static_cast<unsigned int>(bodyVolumes.size());
 }
 
 // A tree's leaf as the vertex stages read it. The narrowing to float happens
@@ -359,17 +399,20 @@ void CdlodHandler::removeInstance(std::weak_ptr<CdlodInstance> instanceWeak) {
     }
 }
 
-void CdlodHandler::update(const FrameRenderParams& params) {
+void CdlodHandler::update(const FrameRenderParams& params,
+                          const std::vector<Cylinder>& casterVolumes) {
     for (const std::shared_ptr<CdlodSurface>& surface : m_surfaces) {
-        selectVisibleNodes(*surface, params);
+        selectVisibleNodes(*surface, params, casterVolumes);
+        sortPatchesByTier(*surface, casterVolumes.size());
         uploadSelection(*surface);
     }
 }
 
-void CdlodHandler::selectVisibleNodes(CdlodSurface& surface,
-                                      const FrameRenderParams& params) {
+void CdlodHandler::selectVisibleNodes(CdlodSurface& surface, const FrameRenderParams& params,
+                                      const std::vector<Cylinder>& casterVolumes) {
     surface.m_selectedLeaves.clear();
     surface.m_selectedPatches.clear();
+    surface.m_patchTiers.clear();
     surface.m_instanceData.assign(surface.m_instances.size(), CdlodInstanceData{});
 
     // Every instance appends its own leaves to the one buffer this surface
@@ -382,18 +425,57 @@ void CdlodHandler::selectVisibleNodes(CdlodSurface& surface,
             m_ssboManager->getMeshTransform(instance.m_ssboIndex)};
         instance.m_pose = bodyRenderPose(transform, params);
 
-        // The tree describes leaves, not who owns them, so the ones it just
-        // appended are stamped here with where this instance's parameters sit.
+        // Into the body's frame once rather than per patch: the frame the tree
+        // already works in.
+        m_bodyCylinders.clear();
+        for (const Cylinder& cylinder : casterVolumes) {
+            m_bodyCylinders.push_back(volumeInBodySpace(cylinder, instance.m_pose));
+        }
+
+        // The tree describes leaves, not who owns them: the ones it appended are
+        // stamped here with this instance's parameter slot and its caster tier.
         const size_t firstLeaf{surface.m_selectedLeaves.size()};
         instance.m_tree.updateAndSelect(instance.m_pose.m_cameraBodyPosition,
                                         surface.m_selectedLeaves);
         for (size_t leaf{firstLeaf}; leaf < surface.m_selectedLeaves.size(); ++leaf) {
-            surface.m_selectedPatches.push_back(makePatch(
-                surface.m_selectedLeaves[leaf], static_cast<int32_t>(instanceIndex)));
+            const CdlodLeaf& selected{surface.m_selectedLeaves[leaf]};
+            surface.m_selectedPatches.push_back(
+                makePatch(selected, static_cast<int32_t>(instanceIndex)));
+            surface.m_patchTiers.push_back(
+                casterTier(m_bodyCylinders, selected.m_boundsCentre,
+                           selected.m_boundsRadius * k_casterBoundsMargin));
         }
 
         surface.m_instanceData[instanceIndex] = makeInstanceData(instance);
     }
+}
+
+void CdlodHandler::sortPatchesByTier(CdlodSurface& surface, size_t tierCount) {
+    // One tier per volume, plus the one holding what no volume reaches.
+    const size_t tiers{tierCount + 1};
+
+    m_tierCursor.assign(tiers, 0);
+    for (unsigned int tier : surface.m_patchTiers) {
+        ++m_tierCursor[tier];
+    }
+
+    // The running sum leaves the cursor at each tier's block start and m_tierPrefix
+    // at its end: the patch count a draw of that tier asks for.
+    surface.m_tierPrefix.assign(tiers, 0);
+    size_t start{0};
+    for (size_t tier{0}; tier < tiers; ++tier) {
+        const size_t count{m_tierCursor[tier]};
+        m_tierCursor[tier] = start;
+        start += count;
+        surface.m_tierPrefix[tier] = start;
+    }
+
+    surface.m_sortedPatches.resize(surface.m_selectedPatches.size());
+    for (size_t patch{0}; patch < surface.m_selectedPatches.size(); ++patch) {
+        surface.m_sortedPatches[m_tierCursor[surface.m_patchTiers[patch]]++] =
+            surface.m_selectedPatches[patch];
+    }
+    surface.m_selectedPatches.swap(surface.m_sortedPatches);
 }
 
 void CdlodHandler::uploadSelection(CdlodSurface& surface) {
@@ -449,7 +531,18 @@ void CdlodHandler::renderAllSurfaces(const FrameRenderParams& params, bool isGeo
 
     // One program bind and one draw per surface, however many instances wear it.
     for (const std::shared_ptr<CdlodSurface>& surface : m_surfaces) {
-        if (surface->m_selectedPatches.empty()) continue;
+        assert(!surface->m_tierPrefix.empty() && "Surface drawn before update grouped it");
+        // Only the sentinel may sit past the last tier. A real one that does means
+        // the pass is indexing a grouping built from a different set of volumes,
+        // which the clamp below would otherwise hide as a full draw.
+        assert((params.casterTier == ~0u || params.casterTier < surface->m_tierPrefix.size())
+               && "Caster tier past the grouping: cascades and caster volumes disagree");
+
+        // A tier past the last, an ungrouped pass among them, draws every patch.
+        const size_t tier{
+            std::min<size_t>(params.casterTier, surface->m_tierPrefix.size() - 1)};
+        const GLsizei patchCount{static_cast<GLsizei>(surface->m_tierPrefix[tier])};
+        if (patchCount == 0) continue;
 
         ShaderProgram& program{isGeometryPass ? *surface->m_gbufferProgram
                                               : *surface->m_depthProgram};
@@ -477,8 +570,7 @@ void CdlodHandler::renderAllSurfaces(const FrameRenderParams& params, bool isGeo
                          surface->m_instanceDataBuffer);
         glBindVertexArray(surface->m_VAO);
         glDrawElementsInstanced(GL_TRIANGLES, m_patchGeometry->getIndexCount(),
-                                GL_UNSIGNED_SHORT, 0,
-                                static_cast<GLsizei>(surface->m_selectedPatches.size()));
+                                GL_UNSIGNED_SHORT, 0, patchCount);
     }
 
     glBindVertexArray(0);

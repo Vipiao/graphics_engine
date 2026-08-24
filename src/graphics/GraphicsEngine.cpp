@@ -134,20 +134,28 @@ void GraphicsEngine::renderScene() {
         m_graphicsEngineBase->m_ditherStrength
     };
 
-    // Node selection for the CDLOD bodies, once for the whole frame: the shadow
-    // cascades and the G-buffer must draw the same selection, not two that
-    // disagree at a subdivision boundary.
-    m_cdlodHandler->update(frameParams);
-
-    unsigned int shadowMapTextureArray = 0;
-
+    // The cascades are placed before anything selects against them: what each one
+    // can be shadowed by is what decides which patches have to be drawn into it.
     if (m_shadowsEnabled) {
-        // Render shadow map
         // View direction in world axes: the view matrix's third row is the camera's
         // backward, so negating it gives what the cascades are pushed along.
         const glm::dvec3 camForward{-glm::dvec3{frameParams.view[0][2], frameParams.view[1][2],
                                                 frameParams.view[2][2]}};
-        m_shadowRenderer->beginShadowPass(m_lightDirection, camForward, getFrameNum());
+        m_shadowRenderer->updateCascades(m_lightDirection, camForward, getFrameNum());
+    }
+
+    // Node selection for the CDLOD bodies, once for the whole frame: the shadow
+    // cascades and the G-buffer must draw the same selection, not two that
+    // disagree at a subdivision boundary. The cascades only group that one
+    // selection, so a cascade draws a prefix of what the camera draws whole.
+    // No volumes leaves the selection in one tier, which every pass draws whole.
+    m_cdlodHandler->update(frameParams, m_shadowsEnabled ? m_shadowRenderer->getCasterVolumes()
+                                                         : std::vector<Cylinder>{});
+
+    unsigned int shadowMapTextureArray = 0;
+
+    if (m_shadowsEnabled) {
+        m_shadowRenderer->beginShadowPass();
         renderShadowPass();
         m_shadowRenderer->endShadowPass();
         
@@ -239,6 +247,7 @@ void GraphicsEngine::renderShadowPass() {
             m_lightDirection,
             getCamPos()
         };
+        depthParams.casterTier = cascadeIndex;
 
         // Render depth-only pass for shadow mapping. Only opaque objects cast shadows.
         // The pass culls front faces for all three, set once in beginShadowPass.

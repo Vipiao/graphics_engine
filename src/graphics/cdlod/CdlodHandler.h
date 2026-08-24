@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 #include <glad/glad.h>
+#include "math/Cylinder.h"
 #include "../ShaderProgram.h"
 #include "../FrameRenderParams.h"
 #include "../Texture2D.h"
@@ -77,6 +78,13 @@ struct CdlodPatch {
 struct CdlodBodyPose {
     glm::dmat3 m_bodyRotation{1.0};
     glm::dvec3 m_cameraBodyPosition{0.0};
+    // The inverse rather than the transpose, for the reason bodyRenderPose gives
+    // where it takes it; kept because that is where it was already paid for. Takes
+    // a camera-relative direction into the body's own frame.
+    glm::dmat3 m_inverseBodyRotation{1.0};
+    // The body's scale, so a length carried into that frame can be divided by what
+    // the vertex stage will multiply it back by.
+    glm::dvec3 m_scale{1.0};
 };
 
 /**
@@ -174,6 +182,14 @@ struct CdlodSurface {
     // frames only so their storage is reused.
     std::vector<CdlodLeaf> m_selectedLeaves;
     std::vector<CdlodPatch> m_selectedPatches;
+    // Which tier each patch fell in, parallel to m_selectedPatches until the sort
+    // consumes it, and the buffer the sort scatters into. Kept across frames only
+    // so their storage is reused.
+    std::vector<unsigned int> m_patchTiers;
+    std::vector<CdlodPatch> m_sortedPatches;
+    // How many patches sit at or below each tier, so index k is what a draw of
+    // tier k asks for. One entry per tier plus one, the last being every patch.
+    std::vector<size_t> m_tierPrefix{0};
     // Indexed by position in m_instances, which is the index each patch carries.
     std::vector<CdlodInstanceData> m_instanceData;
 };
@@ -241,7 +257,11 @@ public:
 
     // Re-selects every instance's visible nodes for this frame and uploads them.
     // Must run before the passes below so they draw one consistent selection.
-    void update(const FrameRenderParams& params);
+    //
+    // casterVolumes groups the selection into tiers, one per volume plus one for
+    // the patches inside none of them, ordered so a depth pass can draw a prefix
+    // of it. Empty leaves the selection in one tier, which every pass draws whole.
+    void update(const FrameRenderParams& params, const std::vector<Cylinder>& casterVolumes);
 
     // G-buffer pass.
     void renderGeometry(const FrameRenderParams& params);
@@ -274,6 +294,11 @@ private:
 
     bool m_wireframe{false};
 
+    // Scratch reused across frames and instances: the caster volumes carried into
+    // one body's frame, and the counting sort's per-tier write cursor.
+    std::vector<Cylinder> m_bodyCylinders;
+    std::vector<size_t> m_tierCursor;
+
     // The stage at stagePath with the generated face table and the surface
     // snippet spliced in at their markers. Throws if either is missing.
     static std::string buildStageSource(const char* stagePath,
@@ -284,7 +309,12 @@ private:
     static void buildSurfacePrograms(CdlodSurface& surface);
 
     // Fills the surface's selection and uploads it.
-    void selectVisibleNodes(CdlodSurface& surface, const FrameRenderParams& params);
+    void selectVisibleNodes(CdlodSurface& surface, const FrameRenderParams& params,
+                            const std::vector<Cylinder>& casterVolumes);
+    // Groups the selection so every tier's patches sit together and the tiers run
+    // innermost first, leaving m_tierPrefix holding what a draw of each tier asks
+    // for. Counting sort, so the result is fixed by the tiers alone.
+    void sortPatchesByTier(CdlodSurface& surface, size_t tierCount);
     static void uploadSelection(CdlodSurface& surface);
 
     // Binds the surface's textures and pushes its scalars into the bound
