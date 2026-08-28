@@ -407,6 +407,12 @@ void GraphicsEngine::setCdlodSurfaceTexture(std::weak_ptr<CdlodSurface> surface,
     m_cdlodHandler->setSurfaceTexture(std::move(surface), samplerName, spec);
 }
 
+void GraphicsEngine::setCdlodSurfaceCubeTexture(std::weak_ptr<CdlodSurface> surface,
+                                                const std::string& samplerName,
+                                                const CubeTextureSpec& spec) {
+    m_cdlodHandler->setSurfaceCubeTexture(std::move(surface), samplerName, spec);
+}
+
 void GraphicsEngine::setCdlodSurfaceUniform(std::weak_ptr<CdlodSurface> surface,
                                             const std::string& name, float value) {
     m_cdlodHandler->setSurfaceUniform(std::move(surface), name, value);

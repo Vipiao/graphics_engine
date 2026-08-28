@@ -97,12 +97,19 @@ vec3 cdlodPatchOffset(vec2 patchUv, vec3 uAxis, vec3 vAxis) {
 // The injected surface body turns a crude point into geometry:
 //
 //    Df3  cdlodSurfacePoint(Df3 crudePoint, float sampleSpacing);
-//    vec3 cdlodSurfaceNormal(Df3 crudePoint, vec3 crudeDerivX, vec3 crudeDerivY);
+//    vec3 cdlodSurfaceNormal(Df3 crudePoint, vec3 crudeDerivX, vec3 crudeDerivY,
+//                            out vec3 surfaceColour);
 //
 // crudePoint is a point of the solid the caller's root frames came off, in the
 // body's own frame and in metres; what that solid is and what it maps to are the
 // caller's entirely. Two functions because the vertex stage places geometry and
 // the fragment stage shades.
+//
+// surfaceColour tints the body's own colour rather than replacing it, so a
+// surface with no opinion about how it looks writes white and the body is drawn
+// exactly as its colour says. It comes back beside the normal because both are
+// wanted at the same place and fall out of the same lookups; splitting them
+// would read the surface twice per pixel to learn two halves of one answer.
 //
 // Both are told how finely they are sampled, or they read detail their samples
 // cannot carry and return a lattice instead of terrain -- the normal in screen

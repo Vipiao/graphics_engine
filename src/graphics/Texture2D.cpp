@@ -4,36 +4,13 @@
 
 namespace {
 
-// The three things GL wants to describe one texel: how it is stored, how the
-// upload is laid out, and what type the upload holds.
-struct FormatLayout {
-    GLenum m_internalFormat;
-    GLenum m_pixelFormat;
-    GLenum m_pixelType;
-};
-
-FormatLayout formatLayout(TextureSpec::Format format) {
-    switch (format) {
-        case TextureSpec::Format::R8:    return {GL_R8, GL_RED, GL_UNSIGNED_BYTE};
-        case TextureSpec::Format::RG8:   return {GL_RG8, GL_RG, GL_UNSIGNED_BYTE};
-        case TextureSpec::Format::R16:   return {GL_R16, GL_RED, GL_UNSIGNED_SHORT};
-        case TextureSpec::Format::RG16:  return {GL_RG16, GL_RG, GL_UNSIGNED_SHORT};
-        // Uploaded as full float and stored as half: the narrowing is GL's, so
-        // the caller never handles a 16-bit float itself.
-        case TextureSpec::Format::RG16F: return {GL_RG16F, GL_RG, GL_FLOAT};
-        case TextureSpec::Format::RGB8:  return {GL_RGB8, GL_RGB, GL_UNSIGNED_BYTE};
-        case TextureSpec::Format::RGBA8: return {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE};
-    }
-    throw std::runtime_error("Texture2D: unknown format");
-}
-
 GLint wrapMode(TextureSpec::Wrap wrap) {
     return wrap == TextureSpec::Wrap::Repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;
 }
 
 }  // namespace
 
-Texture2D::Texture2D(const TextureSpec& spec) {
+Texture2D::Texture2D(const TextureSpec& spec) : Texture{GL_TEXTURE_2D} {
     if (spec.m_width <= 0 || spec.m_height <= 0) {
         throw std::runtime_error("Texture2D: width and height must be positive");
     }
@@ -41,9 +18,8 @@ Texture2D::Texture2D(const TextureSpec& spec) {
         throw std::runtime_error("Texture2D: no pixels to upload");
     }
 
-    const FormatLayout layout{formatLayout(spec.m_format)};
-    const GLint filter{spec.m_filter == TextureSpec::Filter::Linear ? GL_LINEAR
-                                                                    : GL_NEAREST};
+    const TextureLayout layout{textureLayout(spec.m_format)};
+    const GLint filter{spec.m_filter == TextureFilter::Linear ? GL_LINEAR : GL_NEAREST};
 
     glGenTextures(1, &m_id);
     glBindTexture(GL_TEXTURE_2D, m_id);
@@ -66,7 +42,7 @@ Texture2D::Texture2D(const TextureSpec& spec) {
     if (spec.m_generateMipmaps) {
         glGenerateMipmap(GL_TEXTURE_2D);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                        spec.m_filter == TextureSpec::Filter::Linear
+                        spec.m_filter == TextureFilter::Linear
                             ? GL_LINEAR_MIPMAP_LINEAR
                             : GL_NEAREST_MIPMAP_NEAREST);
     } else {
@@ -76,8 +52,4 @@ Texture2D::Texture2D(const TextureSpec& spec) {
     }
 
     glBindTexture(GL_TEXTURE_2D, 0);
-}
-
-Texture2D::~Texture2D() {
-    if (m_id != 0) glDeleteTextures(1, &m_id);
 }

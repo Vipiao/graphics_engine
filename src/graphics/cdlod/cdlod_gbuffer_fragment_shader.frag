@@ -41,13 +41,16 @@ void main() {
    // The centre is flat, so the point and the displacement move across the
    // screen at exactly the same rate, and the displacement is small enough to
    // difference without losing the answer to rounding.
+   vec3 surfaceColour = vec3(1.0);
    vec3 viewNormal = normalize(vert_bodyToView *
                                cdlodSurfaceNormal(crudePoint, dFdx(vert_crudeOffset),
-                                                  dFdy(vert_crudeOffset)));
+                                                  dFdy(vert_crudeOffset), surfaceColour));
 
    if (vert_color.a < 1.0 / 255.0) discard;
 
-   gAlbedo = vec4(vert_color.rgb, 0.0);
+   // The surface tints the body rather than replacing it: a surface that says
+   // white leaves the body exactly the colour it was given.
+   gAlbedo = vec4(vert_color.rgb * surfaceColour, 0.0);
    gNormal = vec4(viewNormal * 0.5 + 0.5, 0.5);
    // Untextured, and unoccluded until the surface grows a material.
    gMaterial = vec4(vert_emissiveScalar, 1.0, 1.0, vert_color.a);

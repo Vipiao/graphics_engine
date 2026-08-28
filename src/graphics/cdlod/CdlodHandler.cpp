@@ -316,22 +316,38 @@ void CdlodHandler::setSurfaceTexture(std::weak_ptr<CdlodSurface> surfaceWeak,
         throw std::runtime_error("CdlodHandler::setSurfaceTexture: surface has expired");
     }
 
-    for (CdlodSurfaceTexture& existing : surface->m_textures) {
+    adoptSurfaceTexture(*surface, samplerName, m_textureStore->create(spec));
+}
+
+void CdlodHandler::setSurfaceCubeTexture(std::weak_ptr<CdlodSurface> surfaceWeak,
+                                         const std::string& samplerName,
+                                         const CubeTextureSpec& spec) {
+    const std::shared_ptr<CdlodSurface> surface{surfaceWeak.lock()};
+    if (!surface) {
+        throw std::runtime_error("CdlodHandler::setSurfaceCubeTexture: surface has expired");
+    }
+
+    adoptSurfaceTexture(*surface, samplerName, m_textureStore->createCube(spec));
+}
+
+void CdlodHandler::adoptSurfaceTexture(CdlodSurface& surface,
+                                       const std::string& samplerName,
+                                       std::weak_ptr<Texture> texture) {
+    for (CdlodSurfaceTexture& existing : surface.m_textures) {
         if (existing.m_samplerName == samplerName) {
             // Keeps the unit, so replacing a texture cannot renumber the ones
             // set after it. The old one goes back to the store rather than
             // lingering unreferenced.
             m_textureStore->remove(existing.m_texture);
-            existing.m_texture = m_textureStore->create(spec);
+            existing.m_texture = std::move(texture);
             return;
         }
     }
 
     // Units are handed out in order and never reused: nothing else binds a
     // texture during a CDLOD draw, so this surface has all of them to itself.
-    surface->m_textures.push_back(
-        CdlodSurfaceTexture{samplerName, m_textureStore->create(spec),
-                            static_cast<int>(surface->m_textures.size())});
+    surface.m_textures.push_back(CdlodSurfaceTexture{
+        samplerName, std::move(texture), static_cast<int>(surface.m_textures.size())});
 }
 
 void CdlodHandler::setSurfaceUniform(std::weak_ptr<CdlodSurface> surfaceWeak,
@@ -495,10 +511,10 @@ void CdlodHandler::applySurfaceInputs(const CdlodSurface& surface, unsigned int 
         const GLint location{glGetUniformLocation(program, texture.m_samplerName.c_str())};
         if (location == -1) continue;
 
-        const std::shared_ptr<Texture2D> bound{texture.m_texture.lock()};
+        const std::shared_ptr<Texture> bound{texture.m_texture.lock()};
         if (!bound) continue;
 
-        m_textureStore->bindTexture(texture.m_unit, bound->getID());
+        m_textureStore->bindTexture(texture.m_unit, *bound);
         glUniform1i(location, texture.m_unit);
     }
 

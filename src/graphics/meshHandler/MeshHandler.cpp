@@ -652,7 +652,7 @@ void MeshHandler::renderGeometryHelper(ShaderProgram& program,
       const std::shared_ptr<Texture2D> texture{ m_textureUnits[unit].lock() };
       if (!texture) continue;
 
-      m_textureStore->bindTexture(static_cast<int>(unit), texture->getID());
+      m_textureStore->bindTexture(static_cast<int>(unit), *texture);
 
       const GLint textureLoc{ program.getTextureUnitLocation(static_cast<int>(unit)) };
       if (textureLoc != -1)

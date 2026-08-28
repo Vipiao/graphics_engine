@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 #include "Texture2D.h"
+#include "TextureCube.h"
 #include "ShaderProgram.h"
 
 /**
@@ -28,12 +29,17 @@ class TextureStore {
 public:
     std::weak_ptr<Texture2D> create(const TextureSpec& spec);
 
+    // The same for a texture read by direction. Apart from create rather than
+    // one call taking either, because a caller never has data that could be
+    // uploaded as both, and the two specs describe different shapes.
+    std::weak_ptr<TextureCube> createCube(const CubeTextureSpec& spec);
+
     // The same, with the pixels read off disk first. Asking twice for one path
     // returns what was already loaded rather than a second copy of it -- the
     // only reason the store knows paths exist at all.
     std::weak_ptr<Texture2D> createFromFile(const std::string& path);
 
-    void remove(std::weak_ptr<Texture2D> texture);
+    void remove(std::weak_ptr<Texture> texture);
 
     /**
      * @brief Binds a texture to a unit, skipping the call if it is already there.
@@ -46,7 +52,7 @@ public:
      * There is one GL binding state, so there is one mirror, here rather than
      * per renderer.
      */
-    void bindTexture(int unit, GLuint textureId);
+    void bindTexture(int unit, const Texture& texture);
 
     /**
      * @brief Forgets what is bound, so the next bind of each unit is issued.
@@ -59,7 +65,7 @@ public:
     void invalidateBindings();
 
 private:
-    std::vector<std::shared_ptr<Texture2D>> m_textures;
+    std::vector<std::shared_ptr<Texture>> m_textures;
     // What each unit currently holds; 0 means "unknown or nothing".
     std::array<GLuint, ShaderProgram::s_maxTextureUnits> m_boundUnits{};
     // Weakly held, so a removed texture drops out of the cache on its own

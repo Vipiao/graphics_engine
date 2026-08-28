@@ -149,6 +149,10 @@ GraphicsEngineBase::GraphicsEngineBase(TimeHandler* timeHandler, Mode mode,
    glDepthFunc(GL_GEQUAL);
    glEnable(GL_DEPTH_TEST);
    glEnable(GL_CULL_FACE);
+   // Cube maps filter across their face boundaries. Without it the last half
+   // texel of each face flattens against the rim instead of meeting its
+   // neighbour, which shows as a ridge along all twelve of the cube's edges.
+   glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
    //glPolygonMode (GL_FRONT_AND_BACK, GL_LINE);
    //glEnable(GL_BLEND);
    //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);

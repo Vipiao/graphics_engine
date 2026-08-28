@@ -11,10 +11,10 @@
 #include "cdlod/CdlodConfig.h"
 // CdlodPatchBounds.h carries the caller's shape hook and the patch frame type.
 #include "cdlod/CdlodPatchBounds.h"
-#include "cdlod/CdlodTree.h"
 // Texture2D.h provides TextureSpec, which callers fill in to hand a surface
 // generated image data.
 #include "Texture2D.h"
+#include "TextureCube.h"
 // filesystem carries the recording path the constructor passes through.
 #include <filesystem>
 
@@ -224,6 +224,11 @@ public:
     // it, are the caller's to decide: the engine only makes it reachable.
     void setCdlodSurfaceTexture(std::weak_ptr<CdlodSurface> surface,
                                 const std::string& samplerName, const TextureSpec& spec);
+    // The same for a map the snippet reads by direction, which is what a field
+    // covering a whole body once wants: no repeat to hide and no seam to close.
+    void setCdlodSurfaceCubeTexture(std::weak_ptr<CdlodSurface> surface,
+                                    const std::string& samplerName,
+                                    const CubeTextureSpec& spec);
     void setCdlodSurfaceUniform(std::weak_ptr<CdlodSurface> surface,
                                 const std::string& name, float value);
     // Debug view of the subdivision: wireframe patches tinted by quadtree level.

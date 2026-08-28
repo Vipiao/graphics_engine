@@ -11,6 +11,7 @@
 #include "../ShaderProgram.h"
 #include "../FrameRenderParams.h"
 #include "../Texture2D.h"
+#include "../TextureCube.h"
 #include "CdlodConfig.h"
 #include "CdlodPatchBounds.h"
 #include "CdlodTree.h"
@@ -122,8 +123,9 @@ struct CdlodInstance {
 struct CdlodSurfaceTexture {
     std::string m_samplerName;
     // Owned by the shared store, not here, so the same generated map can be
-    // reached from anywhere else that wants it.
-    std::weak_ptr<Texture2D> m_texture;
+    // reached from anywhere else that wants it. Held by the base, the snippet
+    // rather than the renderer being what knows the shape it declared.
+    std::weak_ptr<Texture> m_texture;
     int m_unit{0};
 };
 
@@ -241,6 +243,8 @@ public:
     // texture holds and how it is projected are decided entirely in the snippet.
     void setSurfaceTexture(std::weak_ptr<CdlodSurface> surface,
                            const std::string& samplerName, const TextureSpec& spec);
+    void setSurfaceCubeTexture(std::weak_ptr<CdlodSurface> surface,
+                               const std::string& samplerName, const CubeTextureSpec& spec);
     void setSurfaceUniform(std::weak_ptr<CdlodSurface> surface, const std::string& name,
                            float value);
 
@@ -282,6 +286,12 @@ public:
     std::pair<bool, std::string> reloadShaders();
 
 private:
+    // Files a texture the store has already made under its sampler name, taking
+    // over the unit of whatever it replaces. The shape is settled by the time it
+    // arrives, so both public setters end here.
+    void adoptSurfaceTexture(CdlodSurface& surface, const std::string& samplerName,
+                             std::weak_ptr<Texture> texture);
+
     // Binding point of the instance buffer; mirrors the binding declared in
     // cdlod_patch.glsl. Binding 0 is the shared transform SSBO.
     static constexpr GLuint k_instanceDataBinding{1};
