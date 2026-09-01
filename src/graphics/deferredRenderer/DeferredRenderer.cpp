@@ -154,7 +154,7 @@ void DeferredRenderer::setupGBuffer(unsigned int width, unsigned int height) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, m_gbufferNormal, 0);
     
-    // Setup material texture (RT2) (Emissiveness + has geometry + occlusion + alpha)
+    // Setup material texture (RT2) (Emissiveness + has geometry + alpha)
     glBindTexture(GL_TEXTURE_2D, m_gbufferMaterial);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);

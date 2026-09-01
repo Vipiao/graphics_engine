@@ -354,7 +354,6 @@ void main() {
    vec3 fragPos = reconstructPosition(texCoord, depth);
    float emissiveStrength = materialSample.r;
    float geometryFlag = materialSample.g;
-   float occlusionFactor = materialSample.b;
    float alpha = materialSample.a;
 
    // Detect background pixels and discard them to preserve sky background
@@ -396,8 +395,8 @@ void main() {
    // Phong lighting model: SSAO darkens the ambient term fully and the
    // direct terms slightly; shadowing only affects the direct terms.
    float ff = mix(1.0, ssaoFactor, 0.2);
-   vec3 result = phongLighting(albedo, normal, lightDir, viewDir,
-      ssaoFactor, ff * attenuation * shadowFactor) * occlusionFactor;
+   vec3 result = phongLighting(albedo, roughness, metallic, normal, lightDir, viewDir,
+      ssaoFactor, ff * attenuation * shadowFactor);
    result = mix(result, albedo, emissiveStrength);
    
    // Add screen space reflections with Fresnel
@@ -406,11 +405,16 @@ void main() {
    vec3 reflectedColor = reflectionResult.rgb;
    float reflectionWeight = reflectionResult.a;
    reflectionWeight = min(0.5, reflectionWeight);
-   float reflectionStrength = 0.5;
+   // The environment half of the split-sum approximation (Karis 2013): what a
+   // surface returns of its surroundings takes the same Fresnel term as the
+   // direct lobe, so both move off one number. A rough surface scatters the
+   // reflected rays apart and returns less of any one of them.
+   float reflectionStrength = 0.5 * (1.0 - roughness);
    vec3 reflectionContribution =
       reflectedColor * reflectionStrength *
       reflectionWeight * mix(shadowFactor, 1., 0.4);
-   result += reflectionContribution * (1.0 - metallic * 0.5);
+   result += reflectionContribution *
+      fresnelSchlick(materialF0(albedo, metallic), dot(normal, viewDir));
    
    FragColor = vec4(result, 1.0);
    //debugColor.yz = result.yz;

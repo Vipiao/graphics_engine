@@ -2,16 +2,22 @@
 //
 // Shared surface-material decode for the fragment shaders fed by the mesh and
 // instance vertex stages: resolves the interpolated vertex outputs into the
-// final surface values (normal, masked albedo, alpha, emissive strength) that
-// every pass shades from. Callers declare the varyings and the texture-array
-// uniform and pass them in.
+// final surface values (normal, masked albedo, alpha, emissive strength and the
+// two material terms) that every pass shades from. Callers declare the varyings
+// and the texture-array uniform and pass them in.
 
 struct SurfaceMaterial {
    vec3 normal;             // unit view-space normal (normal mapped if present)
    vec3 color;              // albedo after the color-mask tint
    float alpha;
    float emissiveStrength;  // 0 = fully lit, 1 = fully emissive
+   float roughness;         // 0 = mirror, 1 = fully matte
+   float metallic;          // 0 = dielectric, 1 = conductor
 };
+
+// What a surface shades at when no material texture names a roughness: the lobe
+// phong_lighting.glsl normalizes around, expressed as a roughness.
+const float k_defaultRoughness = 0.35;
 
 // Callers should discard fragments whose alpha is below 1/255. The texture
 // unit parameters index textures; -1 means the texture is not present.
@@ -49,14 +55,18 @@ SurfaceMaterial decodeSurfaceMaterial(
       : 1.0;
    surface.color = mix(objectColor, objectColor * color.rgb, mask);
 
-   // Calculate emissive strength based on scalar and texture
-   if (emissiveScalar < 0.001) {
-      surface.emissiveStrength = 0.0;
-   } else if (materialTextureUnit == -1) {
+   // The material texture carries R: emissive mask, G: roughness, B: metallic.
+   // One fetch serves all three; without the texture the surface is a plain
+   // dielectric at the neutral lobe, emissive only as its scalar says.
+   if (materialTextureUnit == -1) {
       surface.emissiveStrength = emissiveScalar;
+      surface.roughness = k_defaultRoughness;
+      surface.metallic = 0.0;
    } else {
-      float textureValue = texture(textures[materialTextureUnit], uv).r;
-      surface.emissiveStrength = textureValue * emissiveScalar;
+      vec3 material = texture(textures[materialTextureUnit], uv).rgb;
+      surface.emissiveStrength = material.r * emissiveScalar;
+      surface.roughness = material.g;
+      surface.metallic = material.b;
    }
 
    return surface;

@@ -11,7 +11,6 @@ layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normal;
 layout (location = 2) in vec3 tangent;
 layout (location = 3) in vec2 uv;
-layout (location = 4) in float occlusionFactor;
 layout (location = 5) in vec4 color;
 layout (location = 6) in uint meshIndex;
 layout (location = 7) in uint triangleIndex;
@@ -34,7 +33,6 @@ out vec2 vert_uv;
 out vec4 vert_color;
 flat out int vert_colorTextureUnit;
 flat out int vert_normalTextureUnit;
-out float vert_occlusionFactor;
 flat out int vert_materialTextureUnit;
 flat out float vert_emissiveScalar;
 flat out int vert_maskTextureUnit;
@@ -47,7 +45,6 @@ int unpackTextureUnit(uint packedUnits, int slotIndex) {
 }
 
 void main() {
-   vert_occlusionFactor = occlusionFactor;
 
    MeshData meshData = meshDataBuffer[meshIndex];
    vert_uv = uv;

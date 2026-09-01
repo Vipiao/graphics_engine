@@ -94,29 +94,36 @@ vec3 cdlodPatchOffset(vec2 patchUv, vec3 uAxis, vec3 vAxis) {
         + (2.0 * patchUv.y - 1.0) * vAxis;
 }
 
+// What the surface says about a point beyond where it sits: how it faces, how it
+// tints the body, and how tight a highlight it carries. One value rather than a
+// train of out-parameters, since all of it falls out of the same lookups.
+struct CdlodSurfaceShading {
+   vec3 normal;      // unit, in the body's own frame
+   vec3 colour;      // tints the body's colour; white leaves it alone
+   float roughness;  // 0 = mirror, 1 = fully matte
+};
+
 // The injected surface body turns a crude point into geometry:
 //
-//    Df3  cdlodSurfacePoint(Df3 crudePoint, float sampleSpacing);
-//    vec3 cdlodSurfaceNormal(Df3 crudePoint, vec3 crudeDerivX, vec3 crudeDerivY,
-//                            out vec3 surfaceColour);
+//    Df3 cdlodSurfacePoint(Df3 crudePoint, float sampleSpacing);
+//    CdlodSurfaceShading cdlodSurfaceShading(Df3 crudePoint, vec3 crudeDerivX,
+//                                            vec3 crudeDerivY);
 //
 // crudePoint is a point of the solid the caller's root frames came off, in the
 // body's own frame and in metres; what that solid is and what it maps to are the
 // caller's entirely. Two functions because the vertex stage places geometry and
 // the fragment stage shades.
 //
-// surfaceColour tints the body's own colour rather than replacing it, so a
-// surface with no opinion about how it looks writes white and the body is drawn
-// exactly as its colour says. It comes back beside the normal because both are
-// wanted at the same place and fall out of the same lookups; splitting them
-// would read the surface twice per pixel to learn two halves of one answer.
+// The colour tints the body's own rather than replacing it: a surface with no
+// opinion about how it looks returns white, and the body is drawn exactly as its
+// own colour says.
 //
 // Both are told how finely they are sampled, or they read detail their samples
 // cannot carry and return a lattice instead of terrain -- the normal in screen
 // derivatives, which only the fragment stage has, the position in metres between
 // vertices, which this file computes.
 //
-// Both take the point wide even though one returns only a direction: a body-sized
+// Both take the point wide even though only one returns a position: a body-sized
 // float steps half a metre, enough to alias a fine map. Df3 is already in scope
 // from shared_shaders/dekker_arithmetic.glsl, named here for snippet authors
 // outside this repository, who have no relative path that would reach it.

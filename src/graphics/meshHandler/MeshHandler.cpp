@@ -44,10 +44,12 @@ MeshHandler::MeshHandler(size_t maxTriangles, SSBOManager* ssboManager, TextureS
    glBindBuffer(GL_ARRAY_BUFFER, m_vertexBuffer);
    glBufferData(GL_ARRAY_BUFFER, sizeof(Vertex) * 3 * m_maxTriangles, nullptr, GL_DYNAMIC_DRAW); // Reserve space
 
-   // ShaderAttribute.
+   // ShaderAttribute. A vertex stage that does not read an attribute has it
+   // stripped at compile time, so an absent location is only an error for the
+   // ones a draw cannot mean anything without.
    struct ShaderAttribute {
       const char* name; GLint size;
-      GLenum type; bool isIntegerType; size_t offset;
+      GLenum type; bool isIntegerType; size_t offset; bool required;
    };
 
    // VAO setup.
@@ -56,27 +58,26 @@ MeshHandler::MeshHandler(size_t maxTriangles, SSBOManager* ssboManager, TextureS
    glBindBuffer(GL_ARRAY_BUFFER, m_vertexBuffer);
 
    ShaderAttribute attributes[] = {
-       {"position", 3, GL_FLOAT, false, offsetof(Vertex, position)},
-       {"normal", 3, GL_FLOAT, false, offsetof(Vertex, normal)},
-       {"tangent", 3, GL_FLOAT, false, offsetof(Vertex, tangent)},
-       {"uv", 2, GL_FLOAT, false, offsetof(Vertex, uv)},
-       {"occlusionFactor", 1, GL_FLOAT, false, offsetof(Vertex, occlusionFactor)},
-       {"color", 4, GL_FLOAT, false, offsetof(Vertex, color)},
-       {"meshIndex", 1, GL_UNSIGNED_INT, true, offsetof(Vertex, meshIndex)},
-       {"triangleIndex", 1, GL_UNSIGNED_INT, true, offsetof(Vertex, triangleId)},
-       {"textureUnits", 1, GL_UNSIGNED_INT, true, offsetof(Vertex, textureUnits)}
+       {"position", 3, GL_FLOAT, false, offsetof(Vertex, position), true},
+       {"normal", 3, GL_FLOAT, false, offsetof(Vertex, normal), true},
+       {"tangent", 3, GL_FLOAT, false, offsetof(Vertex, tangent), true},
+       {"uv", 2, GL_FLOAT, false, offsetof(Vertex, uv), true},
+       {"color", 4, GL_FLOAT, false, offsetof(Vertex, color), true},
+       {"meshIndex", 1, GL_UNSIGNED_INT, true, offsetof(Vertex, meshIndex), true},
+       {"triangleIndex", 1, GL_UNSIGNED_INT, true, offsetof(Vertex, triangleId), false},
+       {"textureUnits", 1, GL_UNSIGNED_INT, true, offsetof(Vertex, textureUnits), true}
    };
    for (const auto& attr : attributes) {
       GLint attribLocation = glGetAttribLocation(m_shaderProgram.getID(), attr.name);
-      if (attribLocation != -1) {
-         glEnableVertexAttribArray(attribLocation);
-         if (attr.isIntegerType) {
-            glVertexAttribIPointer(attribLocation, attr.size, attr.type, sizeof(Vertex), (void*)attr.offset);
-         } else {
-            glVertexAttribPointer(attribLocation, attr.size, attr.type, GL_FALSE, sizeof(Vertex), (void*)attr.offset);
-         }
+      if (attribLocation == -1) {
+         assert(!attr.required && "vertex attribute missing from the shader program");
+         continue;
+      }
+      glEnableVertexAttribArray(attribLocation);
+      if (attr.isIntegerType) {
+         glVertexAttribIPointer(attribLocation, attr.size, attr.type, sizeof(Vertex), (void*)attr.offset);
       } else {
-         std::cout << "Warning: \"" << attr.name << "\" not found as an attribute in shader program." << std::endl;
+         glVertexAttribPointer(attribLocation, attr.size, attr.type, GL_FALSE, sizeof(Vertex), (void*)attr.offset);
       }
    }
 
@@ -118,7 +119,6 @@ std::vector<uint32_t> MeshHandler::appendTrianglesToMesh(
    const std::vector<glm::dvec3>* normals,
    const std::vector<glm::dvec3>* tangents,
    const std::vector<glm::dvec2>* uvs,
-   const std::vector<double>* occlusionFactors,
    const std::vector<glm::dvec4>* colors,
    const std::vector<uint32_t>* textureUnits
 ) {
@@ -142,11 +142,6 @@ std::vector<uint32_t> MeshHandler::appendTrianglesToMesh(
       throw std::invalid_argument("Invalid uvs argument: either null or not a multiple of 3.");
    }
 
-   // Verify the input: Ensure occlusionFactors is not a null pointer and the size is a multiple of 3
-   if (occlusionFactors != nullptr && occlusionFactors->size() % 3 != 0) {
-      throw std::invalid_argument("Invalid occlusionFactors argument: If not null, should be a multiple of 3.");
-   }
-
    // Verify the input: Ensure colors is not a null pointer and the size is a multiple of 3
    if (colors != nullptr && colors->size() % 3 != 0) {
       throw std::invalid_argument("Invalid colors argument: If not null, should be a multiple of 3.");
@@ -157,7 +152,6 @@ std::vector<uint32_t> MeshHandler::appendTrianglesToMesh(
       vertices->size() != normals->size() ||
       vertices->size() != tangents->size() ||
       vertices->size() != uvs->size() ||
-      (occlusionFactors != nullptr && vertices->size() != occlusionFactors->size()) ||
       (colors != nullptr && vertices->size() != colors->size()) ||
       (textureUnits != nullptr && vertices->size() != textureUnits->size())
    ) {
@@ -203,7 +197,6 @@ std::vector<uint32_t> MeshHandler::appendTrianglesToMesh(
          glm::vec3((*normals)[ii]),
          glm::vec3((*tangents)[ii]),
          glm::vec2((*uvs)[ii]),
-         occlusionFactors != nullptr ? static_cast<float>((*occlusionFactors)[ii]) : 1.0f,
          colors != nullptr ? glm::vec4((*colors)[ii]) : glm::vec4(1.0f, 1.0f, 1.0f, 1.0f),
          static_cast<uint32_t>(meshIndex),
          newIds.back(),  // Use the last index in newIndices
@@ -359,7 +352,6 @@ void MeshHandler::updateTrianglesInformation(
    const std::vector<glm::dvec3>* normals,
    const std::vector<glm::dvec3>* tangents,
    const std::vector<glm::dvec2>* uvs,
-   const std::vector<double>* occlusionFactors,
    const std::vector<glm::dvec4>* colors
 ) {
    // Check if the mesh index exists.
@@ -378,7 +370,6 @@ void MeshHandler::updateTrianglesInformation(
    if ((normals != nullptr && normals->size() != numVertices) ||
       (tangents != nullptr && tangents->size() != numVertices) ||
       (uvs != nullptr && uvs->size() != numVertices) ||
-      (occlusionFactors != nullptr && occlusionFactors->size() != numVertices) ||
       (colors != nullptr && colors->size() != numVertices)) {
       throw std::invalid_argument("One or more attribute vectors do not match three times the size of triangleIds.");
    }
@@ -414,14 +405,6 @@ void MeshHandler::updateTrianglesInformation(
          }
       }
 
-      // Update occlusion factors, if provided
-      if (occlusionFactors != nullptr) {
-         for (int j = 0; j < 3; ++j) {
-            double occlusionFactor = (*occlusionFactors)[i * 3 + j];
-            m_vertexData[vertexDataIndex + j].occlusionFactor = static_cast<float>(occlusionFactor);
-         }
-      }
-      
       // Update colors, if provided
       if (colors != nullptr) {
          for (int j = 0; j < 3; ++j) {

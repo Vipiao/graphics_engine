@@ -305,11 +305,10 @@ std::vector<uint32_t> GraphicsEngine::appendTrianglesToMesh(
     const std::vector<glm::dvec3>* normals,
     const std::vector<glm::dvec3>* tangents,
     const std::vector<glm::dvec2>* uvs,
-    const std::vector<double>* occlusionFactors,
     const std::vector<glm::dvec4>* colors,
     const std::vector<uint32_t>* textureUnits) {
     return m_meshHandler->appendTrianglesToMesh(
-        meshIndex, vertices, normals, tangents, uvs, occlusionFactors, colors, textureUnits);
+        meshIndex, vertices, normals, tangents, uvs, colors, textureUnits);
 }
 
 void GraphicsEngine::removeTrianglesFromMesh(int meshIndex,
@@ -592,7 +591,6 @@ std::vector<uint32_t> GraphicsEngine::loadModelIntoMesh(
                 &normals,
                 &tangents,
                 &uvs,
-                nullptr,
                 nullptr,
                 &vertexTextureUnits
             );

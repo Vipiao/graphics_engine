@@ -40,7 +40,6 @@ out vec2 vert_uv;
 out vec4 vert_color;
 flat out int vert_colorTextureUnit;
 flat out int vert_normalTextureUnit;
-out float vert_occlusionFactor;
 flat out int vert_materialTextureUnit;
 flat out float vert_emissiveScalar;
 flat out int vert_maskTextureUnit;
@@ -106,7 +105,6 @@ void main() {
     vert_materialTextureUnit = instanceMaterialTextureUnit;
     vert_emissiveScalar = meshData.emissiveScalar;
     vert_maskTextureUnit = instanceMaskTextureUnit;
-    vert_occlusionFactor = 1.0; // Default to no occlusion
 
     gl_Position = projection * viewPos;
 }

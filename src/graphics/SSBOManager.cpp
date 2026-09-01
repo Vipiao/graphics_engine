@@ -1,5 +1,6 @@
 // SSBOManager.cpp
 #include "SSBOManager.h"
+#include <cassert>
 #include <stdexcept>
 #include <iostream>
 #include "math/DekkerArithmetic.h"
@@ -79,6 +80,12 @@ void SSBOManager::updateMeshTransform(
     const glm::dvec3& scale,
     uint64_t time,
     double emissiveScalar) {
+
+    // The cached transform and the buffer write below both refuse an index out
+    // of range, but silently and separately; a caller holding a stale index gets
+    // half an update and no complaint.
+    assert(index >= 0 && static_cast<size_t>(index) < m_maxEntries &&
+           "updateMeshTransform called with an index outside the SSBO");
 
     if (index >= 0 && static_cast<size_t>(index) < m_maxEntries) {
         m_meshTransforms[index] = MeshTransform{

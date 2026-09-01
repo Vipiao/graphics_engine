@@ -7,13 +7,13 @@
  * 
  * The MeshHandler class provides a robust system for managing 3D mesh data in an OpenGL context.
  * It handles the creation, modification, and rendering of triangle-based meshes with support
- * for positions, normals, texture coordinates, and occlusion factors.
+ * for positions, normals, and texture coordinates.
  * 
  * Key features:
  * - Efficient mesh management with unique IDs for both meshes and triangles
  * - Dynamic addition and removal of triangles/meshes
  * - Support for texture mapping
- * - Single-pass rendering with occlusion control
+ * - Single-pass rendering
  * - GPU memory management with vertex buffer objects (VBOs) and vertex array objects (VAOs)
  * 
  * Usage example:
@@ -46,15 +46,10 @@
  *     glm::dvec2(1.0, 0.0),
  *     glm::dvec2(0.5, 1.0)
  * };
- * 
- * // Optional occlusion factors (0.0 = fully occluded, 1.0 = no occlusion)
- * std::vector<double> occlusionFactors = {
- *     1.0, 1.0, 1.0  // No occlusion for any vertex
- * };
- * 
+ *
  * // Add triangle to mesh and get its ID
  * std::vector<uint32_t> triangleIds = meshHandler.appendTrianglesToMesh(
- *     meshId, &vertices, &normals, &tangents, &uvs, &occlusionFactors);
+ *     meshId, &vertices, &normals, &tangents, &uvs);
  * 
  * // Update mesh transform using SSBOManager
  * glm::dvec3 position(0.0, 0.0, 0.0);
@@ -107,7 +102,6 @@ struct Vertex {
    glm::vec3 normal;
    glm::vec3 tangent;
    glm::vec2 uv;
-   float occlusionFactor;
    glm::vec4 color;
    uint32_t meshIndex;
    uint32_t triangleId;
@@ -118,6 +112,12 @@ struct Vertex {
    uint32_t textureUnits;
 };
 #pragma pack(pop)
+
+// The vertex buffer is strided by this and the attributes are addressed by
+// offsetof, so the layout here is the one the GPU reads. Adding or removing a
+// field silently rewrites both; the size is pinned so it cannot happen quietly.
+static_assert(sizeof(Vertex) == 72,
+   "Vertex must match the attribute table the MeshHandler constructor builds");
 
 struct MeshInfo {
    int numTriangles{ 0 };
@@ -149,6 +149,11 @@ public:
 
    // Packs four texture units into the single value a Vertex carries. -1, or any
    // unit the shaders cannot bind, means "no texture" for that slot.
+   //
+   // A slot is one byte and 255 is its "none", so the highest bindable unit has
+   // to stay below that or a real unit would encode as absent.
+   static_assert(ShaderProgram::s_maxTextureUnits < 255,
+      "packTextureUnits needs 255 free as the \"no texture\" sentinel");
    static uint32_t packTextureUnits(int colorTextureUnit, int normalTextureUnit,
                                     int materialTextureUnit, int maskTextureUnit);
    // What packTextureUnits gives for four absent textures.
@@ -162,7 +167,6 @@ public:
       const std::vector<glm::dvec3>* normals,
       const std::vector<glm::dvec3>* tangents,
       const std::vector<glm::dvec2>* uvs,
-      const std::vector<double>* occlusionFactors = nullptr,
       const std::vector<glm::dvec4>* colors = nullptr,
       const std::vector<uint32_t>* textureUnits = nullptr
    );
@@ -175,7 +179,6 @@ public:
       const std::vector<glm::dvec3>* normals = nullptr,
       const std::vector<glm::dvec3>* tangents = nullptr,
       const std::vector<glm::dvec2>* uvs = nullptr,
-      const std::vector<double>* occlusionFactors = nullptr,
       const std::vector<glm::dvec4>* colors = nullptr
    );
    void removeMesh(int meshIndex);

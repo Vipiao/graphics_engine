@@ -16,7 +16,6 @@ in vec2 vert_uv;
 in vec4 vert_color;
 flat in int vert_colorTextureUnit;
 flat in int vert_normalTextureUnit;
-in float vert_occlusionFactor;
 flat in int vert_materialTextureUnit;
 flat in float vert_emissiveScalar;
 flat in int vert_maskTextureUnit;
@@ -39,8 +38,10 @@ void main() {
    vec3 lightDir = normalize(-u_lightDir);
    vec3 viewDir = normalize(-vert_pos);
 
-   vec3 result = phongLighting(surface.color, surface.normal, lightDir, viewDir,
-      vert_occlusionFactor, vert_occlusionFactor);
+   // Forward pass: no ambient occlusion and no shadow map, so nothing dims
+   // either term.
+   vec3 result = phongLighting(surface.color, surface.roughness, surface.metallic,
+      surface.normal, lightDir, viewDir, 1.0, 1.0);
 
    result = mix(result, surface.color, surface.emissiveStrength);
 

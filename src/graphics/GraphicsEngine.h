@@ -126,7 +126,6 @@ public:
         const std::vector<glm::dvec3>* normals,
         const std::vector<glm::dvec3>* tangents,
         const std::vector<glm::dvec2>* uvs,
-        const std::vector<double>* occlusionFactors = nullptr,
         const std::vector<glm::dvec4>* colors = nullptr,
         const std::vector<uint32_t>* textureUnits = nullptr);
     void removeTrianglesFromMesh(int meshIndex, const std::vector<uint32_t>* triangleIds);

@@ -506,7 +506,7 @@ void CdlodHandler::uploadSelection(CdlodSurface& surface) {
 void CdlodHandler::applySurfaceInputs(const CdlodSurface& surface, unsigned int program) const {
     // A stage that does not mention a name has no location for it, which is the
     // ordinary case rather than an error: the depth pass reads whatever the
-    // snippet's elevation needs and nothing the shading needs.
+    // snippet's placement needs and nothing its shading needs.
     for (const CdlodSurfaceTexture& texture : surface.m_textures) {
         const GLint location{glGetUniformLocation(program, texture.m_samplerName.c_str())};
         if (location == -1) continue;
