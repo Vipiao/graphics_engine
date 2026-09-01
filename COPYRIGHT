@@ -1,0 +1,8 @@
+Copyright (c) 2026 Markus Fjellheim. All rights reserved.
+
+This source is published for review. No permission is granted to use,
+copy, modify or distribute it.
+
+Third-party components are covered by their own licences and are not
+affected by the above. See the notices carried inside external/glad and
+external/stb. Dependencies fetched at build time keep their own licences.
