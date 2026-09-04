@@ -33,11 +33,28 @@ elseif(UNIX)
     message(STATUS "Configuring for Linux")
 endif()
 
-# Shared utils library (utils/math/debug + vendored glm). The default assumes
-# the sibling repo layout; override UTILS_DIR to point elsewhere. When a game
-# pulls in both, the guard keeps utils from being added twice.
-set(UTILS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../03_utils/utils" CACHE PATH
-    "Path to the shared utils library repo")
+# Shared utils library (utils/math/debug + vendored glm). Searched for next to
+# this repo first, so cloning the two side by side just works; override
+# UTILS_DIR to point elsewhere. When a game pulls in both, the guard keeps
+# utils from being added twice.
+set(UTILS_DIR "" CACHE PATH "Path to the shared utils library repo")
+if(NOT UTILS_DIR)
+    foreach(candidate
+            "${CMAKE_CURRENT_SOURCE_DIR}/../utils"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../utils"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../03_utils/utils")
+        if(EXISTS "${candidate}/CMakeLists.txt")
+            set(UTILS_DIR "${candidate}")
+            break()
+        endif()
+    endforeach()
+endif()
+if(NOT EXISTS "${UTILS_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR
+        "The utils library was not found. Clone https://github.com/Vipiao/utils "
+        "next to this repository, or configure with -DUTILS_DIR=/path/to/utils")
+endif()
+message(STATUS "GraphicsEngine utils: ${UTILS_DIR}")
 if(NOT TARGET utils)
     add_subdirectory(${UTILS_DIR} ${CMAKE_BINARY_DIR}/utils-build)
 endif()
@@ -110,3 +127,8 @@ endif()
 
 target_compile_definitions(graphics PUBLIC
     ENGINE_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
+# The example is only useful when this repo is the top-level project.
+if(GRAPHICS_ENGINE_STANDALONE)
+    add_subdirectory(example)
+endif()
