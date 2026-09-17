@@ -48,3 +48,6 @@ target-*
 .vs/
 
 notes_*.txt
+# Local Claude config (kept out of git)
+CLAUDE.md
+.claude/
