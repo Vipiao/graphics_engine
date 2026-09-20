@@ -381,8 +381,8 @@ bool GraphicsEngine::getSsaoEnabled() const {
 }
 
 std::weak_ptr<CdlodSurface> GraphicsEngine::createCdlodSurface(
-    const std::string& snippetPath) {
-    return m_cdlodHandler->createSurface(snippetPath);
+    std::function<std::string()> readSnippet) {
+    return m_cdlodHandler->createSurface(std::move(readSnippet));
 }
 
 void GraphicsEngine::removeCdlodSurface(std::weak_ptr<CdlodSurface> surface) {

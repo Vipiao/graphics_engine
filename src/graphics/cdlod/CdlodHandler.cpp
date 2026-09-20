@@ -265,11 +265,11 @@ int CdlodHandler::getPatchQuads() const {
 }
 
 std::string CdlodHandler::buildStageSource(const char* stagePath,
-                                           const std::string& snippetPath) {
+                                           const std::string& snippetSource) {
     // Expands the patch include, which is where the marker lives, so every stage
     // that includes it picks the snippet up without naming it.
     std::string source{ShaderProgram::loadTextFileFromPath(stagePath)};
-    spliceSurfaceBody(source, ShaderProgram::loadTextFileFromPath(snippetPath));
+    spliceSurfaceBody(source, snippetSource);
     return source;
 }
 
@@ -280,16 +280,20 @@ void CdlodHandler::buildSurfacePrograms(CdlodSurface& surface) {
     // The snippet goes into all three stages that consult the surface: the two
     // vertex stages for where it is, the G-buffer fragment stage for how it
     // faces. The shadow pass shades nothing, so its fragment stage is shared.
+    //
+    // Read once and shared between them: the two vertex stages must place a
+    // vertex identically, so they cannot be compiled from two reads that a save
+    // landed between.
+    const std::string snippetSource{surface.m_readSnippet()};
+
     auto gbufferProgram{std::make_unique<ShaderProgram>()};
-    gbufferProgram->loadVertexShader(
-        buildStageSource(s_gbufferVertexPath, surface.m_snippetPath));
+    gbufferProgram->loadVertexShader(buildStageSource(s_gbufferVertexPath, snippetSource));
     gbufferProgram->loadFragmentShader(
-        buildStageSource(s_gbufferFragmentPath, surface.m_snippetPath));
+        buildStageSource(s_gbufferFragmentPath, snippetSource));
     gbufferProgram->linkShaders();
 
     auto depthProgram{std::make_unique<ShaderProgram>()};
-    depthProgram->loadVertexShader(
-        buildStageSource(s_depthVertexPath, surface.m_snippetPath));
+    depthProgram->loadVertexShader(buildStageSource(s_depthVertexPath, snippetSource));
     depthProgram->loadFragmentShaderFromPath(s_depthFragmentPath);
     depthProgram->linkShaders();
 
@@ -299,9 +303,15 @@ void CdlodHandler::buildSurfacePrograms(CdlodSurface& surface) {
     surface.m_depthProgram = std::move(depthProgram);
 }
 
-std::weak_ptr<CdlodSurface> CdlodHandler::createSurface(const std::string& snippetPath) {
+std::weak_ptr<CdlodSurface> CdlodHandler::createSurface(
+    std::function<std::string()> readSnippet) {
+    if (!readSnippet) {
+        throw std::runtime_error(
+            "CdlodHandler::createSurface: a surface needs a snippet to be shaped by");
+    }
+
     auto surface{std::make_shared<CdlodSurface>(m_patchGeometry->getIndexBuffer())};
-    surface->m_snippetPath = snippetPath;
+    surface->m_readSnippet = std::move(readSnippet);
 
     buildSurfacePrograms(*surface);
     m_surfaces.push_back(std::move(surface));
@@ -600,9 +610,10 @@ std::pair<bool, std::string> CdlodHandler::reloadShaders() {
     std::string allErrors;
     bool allSuccess{true};
 
-    // Rebuilt from source rather than delegated to ShaderProgram::reloadShaders:
-    // the vertex stages are compiled from a spliced string and so carry no path
-    // to reload from.
+    // Rebuilt here rather than delegated to ShaderProgram::reloadShaders: the
+    // vertex stages are compiled from a spliced string and so carry no path to
+    // reload from. Each surface is asked for its snippet again, so an edited one
+    // is picked up.
     for (const std::shared_ptr<CdlodSurface>& surface : m_surfaces) {
         try {
             buildSurfacePrograms(*surface);

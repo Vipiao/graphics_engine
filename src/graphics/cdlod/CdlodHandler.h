@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -161,7 +162,12 @@ struct CdlodSurface {
     CdlodSurface(const CdlodSurface&) = delete;
     CdlodSurface& operator=(const CdlodSurface&) = delete;
 
-    std::string m_snippetPath;
+    // Produces the GLSL this surface is built from, and is asked again whenever
+    // the programs are rebuilt, so a snippet kept in a file is picked up as
+    // edited rather than as it stood at startup. What shapes a body is often
+    // partly decided by the caller, which can put its own constants ahead of the
+    // snippet without this having to know what any of them mean.
+    std::function<std::string()> m_readSnippet;
     std::unique_ptr<ShaderProgram> m_gbufferProgram;
     std::unique_ptr<ShaderProgram> m_depthProgram;
 
@@ -232,8 +238,11 @@ public:
 
     // Builds the vertex programs from the patch scaffold with the given surface
     // snippet injected. The snippet decides the body's shape, so there is no
-    // default: a body without one has nowhere to put its vertices.
-    std::weak_ptr<CdlodSurface> createSurface(const std::string& snippetPath);
+    // default: a body without one has nowhere to put its vertices. readSnippet
+    // returns it as GLSL with its own includes already expanded, and is called
+    // again on every rebuild; where the caller keeps it and what the caller puts
+    // in front of it are the caller's business. Throws if it is empty.
+    std::weak_ptr<CdlodSurface> createSurface(std::function<std::string()> readSnippet);
     // Destroys the surface and every instance drawn with it.
     void removeSurface(std::weak_ptr<CdlodSurface> surface);
 
@@ -309,10 +318,10 @@ private:
     std::vector<Cylinder> m_bodyCylinders;
     std::vector<size_t> m_tierCursor;
 
-    // The stage at stagePath with the generated face table and the surface
-    // snippet spliced in at their markers. Throws if either is missing.
+    // The stage at stagePath with the surface's snippet spliced in at its
+    // marker. Throws if the marker is missing.
     static std::string buildStageSource(const char* stagePath,
-                                        const std::string& snippetPath);
+                                        const std::string& snippetSource);
     // Compiles both programs and installs them, replacing any the surface has.
     // Throws without touching the surface if anything fails to compile, so a
     // broken snippet leaves a working surface working.

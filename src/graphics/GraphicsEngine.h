@@ -19,6 +19,7 @@
 #include <filesystem>
 
 class TextureStore;
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -201,11 +202,19 @@ public:
     // the same body cite the same index.
     //
     // A surface is the GLSL that shapes the body: it maps a point on the base
-    // sphere to the final surface, and returns the normal there. Empty path
-    // gives the bare sphere. Instances sharing a surface share its programs.
-    // There is no geometry level in between, unlike createInstanceGeometry: a
-    // subdivided body has no mesh to share, only its own quadtree.
-    std::weak_ptr<CdlodSurface> createCdlodSurface(const std::string& snippetPath);
+    // sphere to the final surface, and returns the normal there. Instances
+    // sharing a surface share its programs. There is no geometry level in
+    // between, unlike createInstanceGeometry: a subdivided body has no mesh to
+    // share, only its own quadtree.
+    //
+    // readSnippet returns the GLSL, with its own includes already expanded --
+    // ShaderProgram::loadTextFileFromPath does that for a snippet kept in a
+    // file. A caller whose shape is partly decided in C++ can put its own
+    // constants in front of it, and nothing here has to learn what they mean.
+    // It is called again on every shader reload, so a snippet read from a file
+    // is recompiled as edited.
+    std::weak_ptr<CdlodSurface> createCdlodSurface(
+        std::function<std::string()> readSnippet);
     // Drops the engine's reference; the surface lives on until its last instance
     void removeCdlodSurface(std::weak_ptr<CdlodSurface> surface);
     // rootFrames are the quadtree's starting squares, in the body's own frame;
