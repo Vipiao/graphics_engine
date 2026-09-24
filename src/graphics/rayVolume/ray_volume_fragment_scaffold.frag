@@ -9,6 +9,7 @@
 // signature declared there.
 
 #include "../shared_shaders/wboit_weight.glsl"
+#include "../shared_shaders/dekker_arithmetic.glsl"
 
 layout(location = 0) out vec4 accum;
 layout(location = 1) out float revealage;
@@ -18,6 +19,7 @@ in vec2 vert_uv;
 flat in vec4 vert_color;
 flat in vec4 vert_value;
 flat in vec3 vert_centerViewPos;
+flat in vec2 vert_centerDistance;
 flat in mat3 vert_viewBasis;   // instance orientation: maps local -> view directions
 
 uniform sampler2D u_sceneDepth;      // G-buffer depth (opaque scene)
@@ -65,6 +67,12 @@ float physicsTime() {
 
 float frameTime() {
    return physicsTime() + u_timeRemainder;
+}
+
+// Distance from the camera to the instance origin, carried wide. To compare it
+// with a nearby value (a radius, say), subtract that from hi, then add lo.
+Df centerDistance() {
+   return Df(vert_centerDistance.x, vert_centerDistance.y);
 }
 
 // The injected shading body defines:

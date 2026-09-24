@@ -44,6 +44,7 @@ out vec2 vert_uv;
 flat out vec4 vert_color;
 flat out vec4 vert_value;           // forward-integrated per-instance values
 flat out vec3 vert_centerViewPos;   // instance origin in view space
+flat out vec2 vert_centerDistance;  // camera to instance origin, as a Dekker (hi, lo)
 flat out mat3 vert_viewBasis;       // instance orientation: local -> view directions
 
 // The proxy mesh is passed through untouched: the injected body decides how the
@@ -61,10 +62,10 @@ void main() {
    vec3 localPos = localRot * (position * localScale) + localPosition;
 
    // Mesh world transform in camera-relative space, with physics interpolation
-   vec3 meshPositionL = df3ToVec(df3Sub(
+   Df3 meshRelative = df3Sub(
       Df3(meshData.positionHigh.xyz, meshData.positionLow.xyz),
-      Df3(u_cameraPositionHigh, u_cameraPositionLow)));
-   meshPositionL += meshData.velocity.xyz * deltaTimeFloat;
+      Df3(u_cameraPositionHigh, u_cameraPositionLow));
+   vec3 meshPositionL = df3ToVec(meshRelative) + meshData.velocity.xyz * deltaTimeFloat;
 
    mat3 worldOrientation =
       calculatePhysicsOrientation(meshData.orientation, meshData.angVel, deltaTimeFloat);
@@ -77,6 +78,12 @@ void main() {
 
    vert_viewPos = (view * vec4(meshPositionL + worldPos, 1.0)).xyz;
    vert_centerViewPos = (view * vec4(meshPositionL + worldCenter, 1.0)).xyz;
+
+   // The same centre kept wide; length ignores rotation, so world axes will do
+   Df3 centerRelative = df3AddVec(
+      meshRelative, meshData.velocity.xyz * deltaTimeFloat + worldCenter);
+   Df centerDistance = dfSqrt(df3Dot(centerRelative, centerRelative));
+   vert_centerDistance = vec2(centerDistance.hi, centerDistance.lo);
 
    // Full model -> view rotation (instance local orientation composed with the
    // interpolated world orientation). Orthonormal, so its transpose maps view

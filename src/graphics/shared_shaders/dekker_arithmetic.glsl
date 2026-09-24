@@ -18,6 +18,8 @@
 // into one rounding, silently turns any of this back into a plain float -- with
 // no error, no warning, and nothing visible until the last bits start to matter.
 // That is what `precise` forbids, and why it appears on every accumulation below.
+// It guards only what flows into a precise variable, so every low part is stored
+// in one before it is returned; inline, total - hi + remainder folds to zero.
 // Products are written as an explicit fma() rather than left to contraction, for
 // the same reason from the other direction: the fusing has to happen there.
 
@@ -58,8 +60,9 @@ Df dfAdd(Df a, Df b) {
 
    precise float remainder = big - total + small + smallLow + bigLow;
    precise float hi = total + remainder;
+   precise float lo = total - hi + remainder;
 
-   return Df(hi, total - hi + remainder);
+   return Df(hi, lo);
 }
 
 // The same algorithm three components wide. GLSL has no templates, so the widths
@@ -75,8 +78,9 @@ Df3 df3Add(Df3 a, Df3 b) {
 
    precise vec3 remainder = big - total + small + smallLow + bigLow;
    precise vec3 hi = total + remainder;
+   precise vec3 lo = total - hi + remainder;
 
-   return Df3(hi, total - hi + remainder);
+   return Df3(hi, lo);
 }
 
 Df dfSub(Df a, Df b) { return dfAdd(a, Df(-b.hi, -b.lo)); }
@@ -122,8 +126,9 @@ Df dfDiv(Df a, Df b) {
    precise float remainder =
       (a.hi - product - exact + a.lo - quotient * b.lo) / b.hi;
    precise float hi = quotient + remainder;
+   precise float lo = quotient - hi + remainder;
 
-   return Df(hi, quotient - hi + remainder);
+   return Df(hi, lo);
 }
 
 // One Newton step off the hardware's float root, which already has half the bits
@@ -138,8 +143,9 @@ Df dfSqrt(Df a) {
 
    precise float correction = ((a.hi - product - exact + a.lo) * 0.5) / root;
    precise float hi = root + correction;
+   precise float lo = root - hi + correction;
 
-   return Df(hi, root - hi + correction);
+   return Df(hi, lo);
 }
 
 Df df3Dot(Df3 a, Df3 b) {
