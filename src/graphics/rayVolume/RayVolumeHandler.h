@@ -10,6 +10,7 @@
 #include <glad/glad.h>
 #include "../ShaderProgram.h"
 #include "../FrameRenderParams.h"
+#include "../LightIntensity.h"
 #include "../instancedGeometry/InstancedGeometry.h"
 
 // Forward declaration
@@ -60,8 +61,10 @@ public:
 
     // Draw all volumes. The framebuffer, blend, cull and depth state are owned
     // by DeferredRenderer::beginRayVolumeSubPass; this binds programs, uniforms
-    // (including the scene depth sampled per pixel) and issues the draws.
+    // (including the scene depth sampled per pixel) and issues the draws. The
+    // light intensity reaches the bodies so a volume lit by the scene dims with it.
     void render(const FrameRenderParams& params,
+                const LightIntensity& lightIntensity,
                 unsigned int sceneDepthTexture,
                 unsigned int opaqueColorTexture,
                 unsigned int screenWidth, unsigned int screenHeight);

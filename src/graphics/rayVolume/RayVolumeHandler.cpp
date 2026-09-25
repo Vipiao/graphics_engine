@@ -211,6 +211,7 @@ void RayVolumeHandler::removeInstance(std::weak_ptr<Geometry> geometryWeak,
 }
 
 void RayVolumeHandler::render(const FrameRenderParams& params,
+                              const LightIntensity& lightIntensity,
                               unsigned int sceneDepthTexture,
                               unsigned int opaqueColorTexture,
                               unsigned int screenWidth, unsigned int screenHeight) {
@@ -243,6 +244,10 @@ void RayVolumeHandler::render(const FrameRenderParams& params,
                            glm::value_ptr(inverseProjection));
         glUniform2f(glGetUniformLocation(id, "u_screenSize"),
                     static_cast<float>(screenWidth), static_cast<float>(screenHeight));
+        glUniform1f(glGetUniformLocation(id, "u_ambientScale"),
+                    static_cast<float>(lightIntensity.m_ambient));
+        glUniform1f(glGetUniformLocation(id, "u_directScale"),
+                    static_cast<float>(lightIntensity.m_direct));
 
         // Scene depth on unit 0, lit opaque color on unit 1 (for bodies that
         // read the underlying color, e.g. to emulate additive blending).

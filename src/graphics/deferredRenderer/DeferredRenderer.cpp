@@ -1,13 +1,10 @@
 #include "DeferredRenderer.h"
 #include "math/BlueNoise.h"
-#include "math/DekkerArithmetic.h"
 #include "utils/HashFunctions.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <iostream>
 #include <stdexcept>
-#include <limits>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -62,10 +59,10 @@ DeferredRenderer::~DeferredRenderer() {
 
 void DeferredRenderer::generateSSAOKernel() {
     m_ssaoKernel.clear();
-    m_ssaoKernel.reserve(m_ssaoSettings.sampleCount);
-    
+    m_ssaoKernel.reserve(m_ssaoSettings.m_sampleCount);
+
     int seed = 0;
-    for (int i = 0; i < m_ssaoSettings.sampleCount; ++i) {
+    for (int i = 0; i < m_ssaoSettings.m_sampleCount; ++i) {
         glm::vec3 sample;
         
         // Generate point in unit cube, reject if outside unit sphere
@@ -338,18 +335,23 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
     // Set SSAO uniforms
     GLint ssaoEnabledLoc = glGetUniformLocation(lightingProgramID, "u_ssaoEnabled");
     if (ssaoEnabledLoc != -1) {
-        glUniform1i(ssaoEnabledLoc, m_ssaoSettings.enabled ? 1 : 0);
+        glUniform1i(ssaoEnabledLoc, m_ssaoSettings.m_enabled ? 1 : 0);
     }
-    
+
     GLint ssaoRadiusLoc = glGetUniformLocation(lightingProgramID, "u_ssaoRadius");
     if (ssaoRadiusLoc != -1) {
-        glUniform1f(ssaoRadiusLoc, static_cast<float>(m_ssaoSettings.radius));
+        glUniform1f(ssaoRadiusLoc, static_cast<float>(m_ssaoSettings.m_radius));
     }
-    
+
     GLint ssaoBiasLoc = glGetUniformLocation(lightingProgramID, "u_ssaoBias");
     if (ssaoBiasLoc != -1) {
-        glUniform1f(ssaoBiasLoc, static_cast<float>(m_ssaoSettings.bias));
+        glUniform1f(ssaoBiasLoc, static_cast<float>(m_ssaoSettings.m_bias));
     }
+
+    glUniform1f(glGetUniformLocation(lightingProgramID, "u_ambientScale"),
+                static_cast<float>(m_lightIntensity.m_ambient));
+    glUniform1f(glGetUniformLocation(lightingProgramID, "u_directScale"),
+                static_cast<float>(m_lightIntensity.m_direct));
 
     // Blue noise drives the temporal sample jitter (SSAO kernel rotation,
     // shadow PCF offsets, SSR ray start offsets).
@@ -381,7 +383,7 @@ void DeferredRenderer::endGeometryPassAndRenderLighting(
     }
     
     // Set SSAO kernel samples
-    for (int i = 0; i < m_ssaoSettings.sampleCount && i < 32; ++i) {
+    for (int i = 0; i < m_ssaoSettings.m_sampleCount && i < 32; ++i) {
         std::string uniformName = "u_ssaoSamples[" + std::to_string(i) + "]";
         GLint sampleLoc = glGetUniformLocation(lightingProgramID, uniformName.c_str());
         if (sampleLoc != -1) {

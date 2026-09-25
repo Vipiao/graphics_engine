@@ -16,6 +16,8 @@ uniform float u_cascadeOrthoSizes[4];
 uniform float u_cascadePush;
 uniform bool u_shadowsEnabled;
 uniform vec3 u_lightDir;
+uniform float u_ambientScale;
+uniform float u_directScale;
 uniform mat4 u_projection;
 uniform mat4 u_inverseProjection;
 uniform vec2 u_screenSize;
@@ -396,7 +398,7 @@ void main() {
    // direct terms slightly; shadowing only affects the direct terms.
    float ff = mix(1.0, ssaoFactor, 0.2);
    vec3 result = phongLighting(albedo, roughness, metallic, normal, lightDir, viewDir,
-      ssaoFactor, ff * attenuation * shadowFactor);
+      ssaoFactor * u_ambientScale, ff * attenuation * shadowFactor * u_directScale);
    result = mix(result, albedo, emissiveStrength);
    
    // Add screen space reflections with Fresnel
@@ -412,7 +414,7 @@ void main() {
    float reflectionStrength = 0.5 * (1.0 - roughness);
    vec3 reflectionContribution =
       reflectedColor * reflectionStrength *
-      reflectionWeight * mix(shadowFactor, 1., 0.4);
+      reflectionWeight * mix(shadowFactor, 1., 0.4) * u_directScale;
    result += reflectionContribution *
       fresnelSchlick(materialF0(albedo, metallic), dot(normal, viewDir));
    

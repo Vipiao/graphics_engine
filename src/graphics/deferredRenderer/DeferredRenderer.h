@@ -2,18 +2,17 @@
 
 #include "../ShaderProgram.h"
 #include "../FrameRenderParams.h"
+#include "../LightIntensity.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <vector>
 #include <glad/glad.h>
 
 struct SSAOSettings {
-   bool enabled = true;
-   int sampleCount = 32;
-   double radius = 0.5;
-   double bias = 0.2;
-   double ambientInfluence = 1.0;
-   double diffuseInfluence = 0.2;
+   bool m_enabled{ true };
+   int m_sampleCount{ 32 };
+   double m_radius{ 0.5 };
+   double m_bias{ 0.2 };
 };
 
 class DeferredRenderer {
@@ -86,6 +85,9 @@ public:
     const SSAOSettings& getSSAOSettings() const { return m_ssaoSettings; }
     void setSSAOSettings(const SSAOSettings& settings);
 
+    const LightIntensity& getLightIntensity() const { return m_lightIntensity; }
+    void setLightIntensity(const LightIntensity& intensity) { m_lightIntensity = intensity; }
+
     // Shader reloading
     std::pair<bool, std::string> reloadShaders();
     
@@ -132,6 +134,8 @@ private:
     // SSAO
     SSAOSettings m_ssaoSettings{};
     std::vector<glm::vec3> m_ssaoKernel{};
+
+    LightIntensity m_lightIntensity{};
 
     // Private methods
     void cleanupGBuffer();

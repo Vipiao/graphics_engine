@@ -28,6 +28,8 @@ uniform vec2 u_screenSize;
 uniform mat4 u_inverseProjection;
 uniform uint u_time;                 // fixed-step tick index of the current frame
 uniform float u_timeRemainder;       // fraction of a tick elapsed at this frame
+uniform float u_ambientScale;        // the scene's ambient light, 1 at full strength
+uniform float u_directScale;         // the scene's direct light, 1 at full strength
 
 // Result of the injected shading body.
 //   color       : straight (non-premultiplied) RGB

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "GraphicsEngineBase.h"
+#include "LightIntensity.h"
 // MeshHandler.h is needed for the nested MeshHandler::Texture return type.
 #include "meshHandler/MeshHandler.h"
 // InstancedGeometry.h provides RenderLayer and the Geometry/Instance handle
@@ -259,6 +260,10 @@ public:
     // normals deliberately disagree, since it will shade the geometry.
     void setSsaoEnabled(bool enabled);
     bool getSsaoEnabled() const;
+
+    // Takes effect from the next lighting pass
+    void setLightIntensity(const LightIntensity& intensity);
+    const LightIntensity& getLightIntensity() const;
 
     // Shader reloading
     std::pair<bool, std::string> reloadShaders();

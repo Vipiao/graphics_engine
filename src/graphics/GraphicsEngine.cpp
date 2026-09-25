@@ -198,6 +198,7 @@ void GraphicsEngine::renderScene() {
     m_deferredRenderer->beginRayVolumeSubPass();
     m_rayVolumeHandler->render(
         frameParams,
+        m_deferredRenderer->getLightIntensity(),
         m_deferredRenderer->getGBufferDepthTexture(),
         m_deferredRenderer->getSceneColorTexture(),
         m_deferredRenderer->getGBufferWidth(),
@@ -372,12 +373,20 @@ void GraphicsEngine::removeRayVolumeInstance(std::weak_ptr<Geometry> geometry,
 
 void GraphicsEngine::setSsaoEnabled(bool enabled) {
     SSAOSettings settings{m_deferredRenderer->getSSAOSettings()};
-    settings.enabled = enabled;
+    settings.m_enabled = enabled;
     m_deferredRenderer->setSSAOSettings(settings);
 }
 
 bool GraphicsEngine::getSsaoEnabled() const {
-    return m_deferredRenderer->getSSAOSettings().enabled;
+    return m_deferredRenderer->getSSAOSettings().m_enabled;
+}
+
+void GraphicsEngine::setLightIntensity(const LightIntensity& intensity) {
+    m_deferredRenderer->setLightIntensity(intensity);
+}
+
+const LightIntensity& GraphicsEngine::getLightIntensity() const {
+    return m_deferredRenderer->getLightIntensity();
 }
 
 std::weak_ptr<CdlodSurface> GraphicsEngine::createCdlodSurface(
