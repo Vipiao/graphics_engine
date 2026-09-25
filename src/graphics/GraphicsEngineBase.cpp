@@ -233,7 +233,8 @@ void GraphicsEngineBase::updateFrameTiming() {
 }
 
 void GraphicsEngineBase::clearScreen() {
-   glClearColor(0.6f, 0.7f, 0.8f, 1.0f);
+   glClearColor(static_cast<float>(m_skyColor.r), static_cast<float>(m_skyColor.g),
+                static_cast<float>(m_skyColor.b), 1.0f);
    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 

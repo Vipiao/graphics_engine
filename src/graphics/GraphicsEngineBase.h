@@ -96,6 +96,8 @@ public:
    // units. 0 = off; the default of 1.0 / 255.0 covers exactly one 8-bit
    // quantization step, dissolving banding without visible grain.
    double m_ditherStrength{ 1.0 / 255.0 };
+   // The background colour, which mirrors reflect as the sky
+   glm::dvec3 m_skyColor{ 0.6, 0.7, 0.8 };
    // Mouse.
    MouseHandler* m_mouseHandler{ nullptr };
    KeyboardHandler* m_keyboardHandler{ nullptr };

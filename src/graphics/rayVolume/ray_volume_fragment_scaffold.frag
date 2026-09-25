@@ -10,6 +10,8 @@
 
 #include "../shared_shaders/wboit_weight.glsl"
 #include "../shared_shaders/dekker_arithmetic.glsl"
+// For bodies that shade a surface the way the lighting passes do
+#include "../shared_shaders/phong_lighting.glsl"
 
 layout(location = 0) out vec4 accum;
 layout(location = 1) out float revealage;
@@ -30,6 +32,8 @@ uniform uint u_time;                 // fixed-step tick index of the current fra
 uniform float u_timeRemainder;       // fraction of a tick elapsed at this frame
 uniform float u_ambientScale;        // the scene's ambient light, 1 at full strength
 uniform float u_directScale;         // the scene's direct light, 1 at full strength
+uniform vec3 u_lightDir;             // view space, the way the light travels
+uniform vec3 u_skyColor;             // the background, for bodies that reflect it
 
 // Result of the injected shading body.
 //   color       : straight (non-premultiplied) RGB

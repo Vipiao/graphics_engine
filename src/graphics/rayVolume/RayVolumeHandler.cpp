@@ -248,6 +248,10 @@ void RayVolumeHandler::render(const FrameRenderParams& params,
                     static_cast<float>(lightIntensity.m_ambient));
         glUniform1f(glGetUniformLocation(id, "u_directScale"),
                     static_cast<float>(lightIntensity.m_direct));
+        const glm::vec3 lightDirView{ glm::dmat3{ params.view } * params.lightDir };
+        glUniform3fv(glGetUniformLocation(id, "u_lightDir"), 1, glm::value_ptr(lightDirView));
+        const glm::vec3 skyColor{ params.skyColor };
+        glUniform3fv(glGetUniformLocation(id, "u_skyColor"), 1, glm::value_ptr(skyColor));
 
         // Scene depth on unit 0, lit opaque color on unit 1 (for bodies that
         // read the underlying color, e.g. to emulate additive blending).

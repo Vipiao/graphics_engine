@@ -131,7 +131,8 @@ void GraphicsEngine::renderScene() {
         m_graphicsEngineBase->m_paniniHorizontal,
         m_graphicsEngineBase->m_paniniVertical,
         m_graphicsEngineBase->getPaniniFitScale(),
-        m_graphicsEngineBase->m_ditherStrength
+        m_graphicsEngineBase->m_ditherStrength,
+        m_graphicsEngineBase->m_skyColor
     };
 
     // The cascades are placed before anything selects against them: what each one
