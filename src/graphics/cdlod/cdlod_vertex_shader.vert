@@ -64,9 +64,9 @@ void main() {
 
    // The pose acts on that offset rather than on a body-frame position, so its
    // last bits cost a fraction of the vertex's distance instead of half a metre
-   // of planet. The world position and centre of rotation cancel: the camera was
-   // placed by inverting this very rotation, and putting it back leaves the
-   // eye-to-vertex vector the view matrix wants.
+   // of planet. The world position and centre of rotation never appear: the
+   // camera was placed in the body's frame on the CPU, and rotating the offset
+   // back gives the eye-to-vertex vector the view matrix wants.
    //
    // Interpolated on the CPU, unlike the meshes sharing this SSBO: selection
    // already builds this pose there, and a second answer could disagree.

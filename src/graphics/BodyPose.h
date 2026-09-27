@@ -8,18 +8,14 @@ struct MeshTransform;
 
 // Where a body stands this frame, and where the camera stands in its frame.
 //
-// The rotation is held at the width it will be uploaded at, and the camera is
-// placed by inverting that narrowed rotation rather than the exact one. The
-// vertex stage undoes the placement with the same matrix, so what it undoes is
-// what was done: the body's world position drops out exactly instead of leaving
-// a part in ten million of the camera's distance from the body's centre, which
-// on a planet is most of a metre and moves whenever the body turns.
+// All exact. The camera is placed with the exact rotation, not with the float
+// copy the vertex stage rotates by: inverting that copy would carry its last
+// bits into the camera's distance from the body's centre, which on a planet is
+// most of a metre and steps whenever the body turns.
 struct BodyPose {
     glm::dmat3 m_bodyRotation{1.0};
     glm::dvec3 m_cameraBodyPosition{0.0};
-    // The inverse rather than the transpose, for the reason bodyRenderPose gives
-    // where it takes it; kept because that is where it was already paid for. Takes
-    // a camera-relative direction into the body's own frame.
+    // Takes a camera-relative direction into the body's own frame.
     glm::dmat3 m_inverseBodyRotation{1.0};
     // The body's scale, so a length carried into that frame can be divided by what
     // the vertex stage will multiply it back by.

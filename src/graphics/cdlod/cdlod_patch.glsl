@@ -31,11 +31,9 @@ struct CdlodInstanceData {
    // every vertex is measured against.
    vec4 cameraBodyPositionHigh;
    vec4 cameraBodyPositionLow;
-   // Body -> world rotation at this frame's pose, built on the CPU. The camera
-   // above was placed by inverting exactly this matrix, so applying it undoes
-   // that placement exactly. Rebuilding it here would agree only to a part in ten
-   // million, which against the camera's distance from a planet's centre is most
-   // of a metre of rigid slide, redrawn every frame the body turns.
+   // Body -> world rotation at this frame's pose, built on the CPU so it is the
+   // pose selection measured against. Only ever applied to offsets from the
+   // camera, so its float width costs a part in ten million of the offset.
    mat3 bodyRotation;
    float lodRangeFactor;
    int ssboIndex;            // the body's world transform, in the shared SSBO
