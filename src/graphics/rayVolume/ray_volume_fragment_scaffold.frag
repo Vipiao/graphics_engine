@@ -16,20 +16,22 @@
 layout(location = 0) out vec4 accum;
 layout(location = 1) out float revealage;
 
-in vec3 vert_viewPos;
+in vec3 vert_exitViewPos;
 in vec2 vert_uv;
 flat in vec4 vert_color;
 flat in vec4 vert_value;
 flat in vec3 vert_centerViewPos;
 flat in vec2 vert_centerDistance;
-flat in mat3 vert_viewBasis;   // instance orientation: maps local -> view directions
+flat in mat3 vert_rayVolumeSpaceToView;   // instance orientation: local -> view directions
+flat in vec3 vert_cameraLocalHigh;
+flat in vec3 vert_cameraLocalLow;
 
 uniform sampler2D u_sceneDepth;      // G-buffer depth (opaque scene)
 uniform sampler2D u_opaqueColor;     // lit opaque color behind this pixel
 uniform vec2 u_screenSize;
 uniform mat4 u_inverseProjection;
-uniform uint u_time;                 // fixed-step tick index of the current frame
-uniform float u_timeRemainder;       // fraction of a tick elapsed at this frame
+uniform uint u_time;                 // physics tick count, not frames; see wrappedPhysicsTime
+uniform float u_timeRemainder;       // how far into the next physics tick this frame is
 uniform float u_ambientScale;        // the scene's ambient light, 1 at full strength
 uniform float u_directScale;         // the scene's direct light, 1 at full strength
 uniform vec3 u_lightDir;             // view space, the way the light travels
@@ -57,37 +59,42 @@ float sceneViewDepth() {
    return -(viewH.z / viewH.w);
 }
 
-// Animation clocks for the body, both measured in the application's fixed
-// simulation ticks:
-//   physicsTime : advances one whole tick at a time, so it carries no render
-//                 interpolation and reads the same on every peer of a session
-//   frameTime   : physicsTime plus the interpolation within the current tick,
-//                 so it advances smoothly with the frame rate
+// Animation clocks for the body. Both are physics time, counted in the
+// application's fixed simulation ticks rather than in frames or seconds; the
+// physics runs at its own fixed rate, independent of the display's.
+//   wrappedPhysicsTicks : whole ticks only, so it steps at the physics rate and
+//                         reads the same on every peer of a session
+//   wrappedPhysicsTime  : the same plus the fraction of the tick this frame sits
+//                         at, so it advances smoothly on any display
 // Both wrap every k_timeWrapTicks, which keeps float sub-tick resolution however
 // long a session runs; animation periodic over that window hides the wrap.
 const uint k_timeWrapTicks = 1048576u;   // 2^20 ticks
 
-float physicsTime() {
+float wrappedPhysicsTicks() {
    return float(u_time & (k_timeWrapTicks - 1u));
 }
 
-float frameTime() {
-   return physicsTime() + u_timeRemainder;
-}
-
-// Distance from the camera to the instance origin, carried wide. To compare it
-// with a nearby value (a radius, say), subtract that from hi, then add lo.
-Df centerDistance() {
-   return Df(vert_centerDistance.x, vert_centerDistance.y);
+float wrappedPhysicsTime() {
+   return wrappedPhysicsTicks() + u_timeRemainder;
 }
 
 // The injected shading body defines:
 //   RayVolumeResult rayVolumeShade(
-//      vec3 viewPos, vec3 rayDir, float backDepth, float sceneDepth,
+//      vec3 rayDir, float exitDistance, float sceneDistance,
 //      vec3 opaqueColor, vec4 value, vec4 color, vec2 uv,
-//      vec3 centerViewPos, mat3 viewBasis);
-// viewBasis maps a local-space direction to view space; transpose(viewBasis)
-// takes a view-space vector into the instance's local frame. opaqueColor is the
+//      vec3 centerViewPos, Df centerDistance,
+//      mat3 rayVolumeSpaceToView, Df3 cameraLocalPosition);
+// The camera sits at the view-space origin and rayDir is the unit view ray, so a
+// point the ray reaches is rayDir * t. exitDistance is the t where the ray leaves
+// the proxy, sceneDistance the t where it meets the opaque scene.
+// centerDistance is the length of centerViewPos carried wide. To compare it with
+// a nearby value (a radius, say), subtract that from hi, then add lo.
+// rayVolumeSpaceToView maps a direction in the instance's own frame to view
+// space; its transpose takes a view-space vector back. cameraLocalPosition is the
+// camera in that frame, in metres, carried wide: a point the ray reaches is this
+// plus transpose(rayVolumeSpaceToView) * (rayDir * t), and anything laid out in
+// this frame, such as a pattern on a spinning planet, stays put on the body.
+// opaqueColor is the
 // lit opaque color behind this pixel: returning (opaqueColor + emission) as the
 // result color makes the WBOIT over-blend resolve to opaque + emission*alpha,
 // i.e. additive (exact for a single layer; approximate when overlapping other
@@ -95,15 +102,17 @@ Df centerDistance() {
 __RAY_VOLUME_BODY__
 
 void main() {
-   vec3 rayDir = normalize(vert_viewPos);
-   float backDepth = -vert_viewPos.z;   // exit depth of the proxy (positive)
-   float sceneDepth = sceneViewDepth();
+   float exitDistance = length(vert_exitViewPos);
+   vec3 rayDir = vert_exitViewPos / exitDistance;
+   // Depth is measured along -z, so the ray's z component turns it into a t
+   float sceneDistance = sceneViewDepth() / max(-rayDir.z, 1e-4);
    vec3 opaqueColor = texelFetch(u_opaqueColor, ivec2(gl_FragCoord.xy), 0).rgb;
 
    RayVolumeResult r = rayVolumeShade(
-      vert_viewPos, rayDir, backDepth, sceneDepth,
+      rayDir, exitDistance, sceneDistance,
       opaqueColor, vert_value, vert_color, vert_uv,
-      vert_centerViewPos, vert_viewBasis);
+      vert_centerViewPos, Df(vert_centerDistance.x, vert_centerDistance.y),
+      vert_rayVolumeSpaceToView, Df3(vert_cameraLocalHigh, vert_cameraLocalLow));
 
    if (r.alpha < 1.0 / 255.0) discard;
 

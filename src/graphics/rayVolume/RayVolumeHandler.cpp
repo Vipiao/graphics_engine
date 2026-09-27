@@ -1,6 +1,9 @@
 // RayVolumeHandler.cpp
 #include "RayVolumeHandler.h"
+#include "../BodyPose.h"
 #include "../InstanceFrameUniforms.h"
+#include "../SSBOManager.h"
+#include "math/DekkerArithmetic.h"
 #include <algorithm>
 #include <cassert>
 #include <stdexcept>
@@ -15,6 +18,9 @@ constexpr const char* s_scaffoldPath =
 constexpr const char* s_defaultBodyPath =
     ENGINE_ASSET_DIR "/src/graphics/rayVolume/ray_volume_default_body.glsl";
 constexpr const char* s_bodyMarker = "__RAY_VOLUME_BODY__";
+// Matches the CameraLocalBuffer binding in ray_volume_vertex_shader.vert; 0 is the
+// mesh data and 1 the CDLOD instances
+constexpr GLuint k_cameraLocalBinding{2};
 }  // namespace
 
 RayVolumeHandler::RayVolumeHandler(SSBOManager* ssboManager)
@@ -28,6 +34,9 @@ RayVolumeHandler::~RayVolumeHandler() {
     for (VolumeGeometry& volume : m_volumes) {
         if (volume.auxVBO != 0) {
             glDeleteBuffers(1, &volume.auxVBO);
+        }
+        if (volume.cameraLocalSSBO != 0) {
+            glDeleteBuffers(1, &volume.cameraLocalSSBO);
         }
     }
 }
@@ -94,6 +103,8 @@ void RayVolumeHandler::setupAuxBuffer(VolumeGeometry& volume) {
     glVertexAttribDivisor(14, 1);
 
     glBindVertexArray(0);
+
+    glGenBuffers(1, &volume.cameraLocalSSBO);
 }
 
 RayVolumeHandler::VolumeGeometry* RayVolumeHandler::findVolume(
@@ -114,6 +125,9 @@ void RayVolumeHandler::releaseGeometry(std::weak_ptr<Geometry> geometryWeak) {
         if (it->geometry->m_uniqueId == geometry->m_uniqueId) {
             if (it->auxVBO != 0) {
                 glDeleteBuffers(1, &it->auxVBO);
+            }
+            if (it->cameraLocalSSBO != 0) {
+                glDeleteBuffers(1, &it->cameraLocalSSBO);
             }
             m_volumes.erase(it);
             return;
@@ -163,6 +177,38 @@ void RayVolumeHandler::uploadAux(VolumeGeometry& volume, size_t index) {
     glBindBuffer(GL_ARRAY_BUFFER, volume.auxVBO);
     glBufferSubData(GL_ARRAY_BUFFER, index * sizeof(RayVolumeAux),
                     sizeof(RayVolumeAux), &volume.aux[index]);
+}
+
+// The camera in each instance's own frame, in metres: the body's pose undone as
+// the terrain undoes it, so anything laid out in that frame stays put on the body
+// under it, then the instance's local placement. The body's scale is put back, so
+// the result pairs with world-sized offsets taken through the view basis.
+void RayVolumeHandler::updateCameraLocal(VolumeGeometry& volume, uint64_t time,
+                                         double timeRemainder, const glm::dvec3& camPos) {
+    const std::vector<std::shared_ptr<Instance>>& instances{volume.geometry->m_instances};
+    if (instances.empty()) return;
+
+    typedef DekkerArithmetic<float> DekkerFloat;
+    volume.cameraLocal.resize(instances.size());
+    for (const std::shared_ptr<Instance>& instance : instances) {
+        const BodyPose pose{bodyRenderPose(
+            m_ssboManager->getMeshTransform(instance->m_ssboIndex), time, timeRemainder,
+            camPos)};
+        const glm::dvec3 cameraLocal{glm::inverse(instance->m_localOrientation) *
+            ((pose.m_cameraBodyPosition - instance->m_localPosition) * pose.m_scale)};
+
+        const DekkerFloat::DekkerNumber x{cameraLocal.x};
+        const DekkerFloat::DekkerNumber y{cameraLocal.y};
+        const DekkerFloat::DekkerNumber z{cameraLocal.z};
+        // Indexed as the draw indexes instances, by their slot in the buffer
+        CameraLocal& camera{volume.cameraLocal[instance->m_bufferIndex]};
+        camera.high = glm::vec4{x.main, y.main, z.main, 0.0f};
+        camera.low = glm::vec4{x.error, y.error, z.error, 0.0f};
+    }
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, volume.cameraLocalSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, volume.cameraLocal.size() * sizeof(CameraLocal),
+                 volume.cameraLocal.data(), GL_STREAM_DRAW);
 }
 
 void RayVolumeHandler::setInstanceValues(std::weak_ptr<Geometry> geometryWeak,
@@ -221,6 +267,10 @@ void RayVolumeHandler::render(const FrameRenderParams& params,
     // float inverse spends the precision reverse-Z was arranged to keep.
     const glm::mat4 inverseProjection{ glm::inverse(params.projection) };
 
+    for (VolumeGeometry& volume : m_volumes) {
+        updateCameraLocal(volume, params.time, params.timeRemainder, params.camPos);
+    }
+
     for (size_t materialIndex = 0; materialIndex < m_materials.size(); ++materialIndex) {
         // Skip materials with no visible instances this frame.
         bool anyInstances = false;
@@ -268,6 +318,8 @@ void RayVolumeHandler::render(const FrameRenderParams& params,
             const Geometry& geometry = *volume.geometry;
             if (geometry.m_instanceData.empty()) continue;
 
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, k_cameraLocalBinding,
+                             volume.cameraLocalSSBO);
             glBindVertexArray(geometry.m_VAO);
             if (geometry.m_hasIndices) {
                 glDrawElementsInstanced(

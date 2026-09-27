@@ -31,6 +31,16 @@ layout (location = 8) in int ssboIndex;
 layout (location = 13) in vec4 state;
 layout (location = 14) in vec4 velocity;
 
+// The camera in each instance's own frame, Dekker split, placed by the CPU this
+// frame at the pose the body is drawn at. Indexed by gl_InstanceID.
+struct CameraLocal {
+   vec4 high;
+   vec4 low;
+};
+layout(std430, binding = 2) readonly buffer CameraLocalBuffer {
+   CameraLocal cameraLocalBuffer[];
+};
+
 uniform uint u_time;
 uniform float u_timeRemainder;
 uniform vec3 u_cameraPositionHigh;
@@ -39,13 +49,15 @@ uniform vec3 u_cameraPositionLow;
 uniform mat4 view;
 uniform mat4 projection;
 
-out vec3 vert_viewPos;              // proxy surface position, camera-relative view space
+out vec3 vert_exitViewPos;          // where the ray leaves the proxy, camera-relative view space
 out vec2 vert_uv;
 flat out vec4 vert_color;
 flat out vec4 vert_value;           // forward-integrated per-instance values
 flat out vec3 vert_centerViewPos;   // instance origin in view space
 flat out vec2 vert_centerDistance;  // camera to instance origin, as a Dekker (hi, lo)
-flat out mat3 vert_viewBasis;       // instance orientation: local -> view directions
+flat out mat3 vert_rayVolumeSpaceToView; // instance orientation: local -> view directions
+flat out vec3 vert_cameraLocalHigh; // camera in the instance's frame, as a Dekker (hi, lo)
+flat out vec3 vert_cameraLocalLow;
 
 // The proxy mesh is passed through untouched: the injected body decides how the
 // geometry maps to the effect, and any coverage margin needed to avoid clipping
@@ -76,7 +88,7 @@ void main() {
    vec3 worldCenter =
       applyRotationTransform(worldOrientation, localPosition * meshData.scale.xyz, cor);
 
-   vert_viewPos = (view * vec4(meshPositionL + worldPos, 1.0)).xyz;
+   vert_exitViewPos = (view * vec4(meshPositionL + worldPos, 1.0)).xyz;
    vert_centerViewPos = (view * vec4(meshPositionL + worldCenter, 1.0)).xyz;
 
    // The same centre kept wide; length ignores rotation, so world axes will do
@@ -88,11 +100,15 @@ void main() {
    // Full model -> view rotation (instance local orientation composed with the
    // interpolated world orientation). Orthonormal, so its transpose maps view
    // vectors back into the instance's local frame.
-   vert_viewBasis = mat3(view) * worldOrientation * localRot;
+   vert_rayVolumeSpaceToView = mat3(view) * worldOrientation * localRot;
+
+   CameraLocal camera = cameraLocalBuffer[gl_InstanceID];
+   vert_cameraLocalHigh = camera.high.xyz;
+   vert_cameraLocalLow = camera.low.xyz;
 
    vert_uv = uv;
    vert_color = instanceColor;
    vert_value = state + velocity * deltaTimeFloat;
 
-   gl_Position = projection * vec4(vert_viewPos, 1.0);
+   gl_Position = projection * vec4(vert_exitViewPos, 1.0);
 }

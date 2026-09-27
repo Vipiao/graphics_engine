@@ -80,6 +80,14 @@ private:
         glm::vec4 velocity{0.0f};
     };
 
+    // The camera in an instance's own frame, Dekker split, refreshed every frame.
+    // Mirrors CameraLocal in ray_volume_vertex_shader.vert. An SSBO rather than
+    // attributes, the attribute locations being used up.
+    struct CameraLocal {
+        glm::vec4 high{0.0f};
+        glm::vec4 low{0.0f};
+    };
+
     struct Material {
         ShaderProgram program;
         std::string bodySnippetPath;   // empty => built-in default body
@@ -93,6 +101,8 @@ private:
         GLuint auxVBO{0};
         std::vector<RayVolumeAux> aux;
         size_t auxCapacity{0};
+        GLuint cameraLocalSSBO{0};
+        std::vector<CameraLocal> cameraLocal;
         size_t materialIndex{0};
     };
 
@@ -103,6 +113,8 @@ private:
     void buildMaterialProgram(Material& material);
     void setupAuxBuffer(VolumeGeometry& volume);
     void uploadAux(VolumeGeometry& volume, size_t index);
+    void updateCameraLocal(VolumeGeometry& volume, uint64_t time, double timeRemainder,
+                           const glm::dvec3& camPos);
     VolumeGeometry* findVolume(const std::shared_ptr<Geometry>& geometry);
     static std::string buildFragmentSource(const std::string& bodySnippetPath);
 };

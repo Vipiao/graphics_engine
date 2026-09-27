@@ -9,6 +9,7 @@
 #include <vector>
 #include <glad/glad.h>
 #include "math/Cylinder.h"
+#include "../BodyPose.h"
 #include "../ShaderProgram.h"
 #include "../FrameRenderParams.h"
 #include "../Texture2D.h"
@@ -69,26 +70,6 @@ struct CdlodPatch {
     float m_frameScale{1.0f};
 };
 
-// Where a body stands this frame, as both the tree and the vertex stage need it.
-//
-// The rotation is held at the width it will be uploaded at, and the camera is
-// placed by inverting that narrowed rotation rather than the exact one. The
-// vertex stage undoes the placement with the same matrix, so what it undoes is
-// what was done: the body's world position drops out exactly instead of leaving
-// a part in ten million of the camera's distance from the body's centre, which
-// on a planet is most of a metre and moves whenever the body turns.
-struct CdlodBodyPose {
-    glm::dmat3 m_bodyRotation{1.0};
-    glm::dvec3 m_cameraBodyPosition{0.0};
-    // The inverse rather than the transpose, for the reason bodyRenderPose gives
-    // where it takes it; kept because that is where it was already paid for. Takes
-    // a camera-relative direction into the body's own frame.
-    glm::dmat3 m_inverseBodyRotation{1.0};
-    // The body's scale, so a length carried into that frame can be divided by what
-    // the vertex stage will multiply it back by.
-    glm::dvec3 m_scale{1.0};
-};
-
 /**
  * @brief One placed CDLOD body: its quadtree, and where it sits.
  *
@@ -116,7 +97,7 @@ struct CdlodInstance {
     // against the same camera, so the morph cannot complete at a different
     // distance than the one the merge was decided at, and turns the vertex by
     // the same rotation the camera was placed with.
-    CdlodBodyPose m_pose{};
+    BodyPose m_pose{};
 };
 
 // A texture the snippet samples, and the sampler it reads it through. The unit
@@ -328,7 +309,8 @@ private:
     static void buildSurfacePrograms(CdlodSurface& surface);
 
     // Fills the surface's selection and uploads it.
-    void selectVisibleNodes(CdlodSurface& surface, const FrameRenderParams& params,
+    void selectVisibleNodes(CdlodSurface& surface, uint64_t time, double timeRemainder,
+                            const glm::dvec3& camPos,
                             const std::vector<Cylinder>& casterVolumes);
     // Groups the selection so every tier's patches sit together and the tiers run
     // innermost first, leaving m_tierPrefix holding what a draw of each tier asks

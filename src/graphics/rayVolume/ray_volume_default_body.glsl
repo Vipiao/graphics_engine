@@ -11,9 +11,10 @@
 // silhouette does not clip the soft edges.
 
 RayVolumeResult rayVolumeShade(
-   vec3 viewPos, vec3 rayDir, float backDepth, float sceneDepth,
+   vec3 rayDir, float exitDistance, float sceneDistance,
    vec3 opaqueColor, vec4 value, vec4 color, vec2 uv,
-   vec3 centerViewPos, mat3 viewBasis)
+   vec3 centerViewPos, Df centerDistance,
+   mat3 rayVolumeSpaceToView, Df3 cameraLocalPosition)
 {
    RayVolumeResult res;
    res.color = vec3(0.0);
@@ -21,7 +22,7 @@ RayVolumeResult rayVolumeShade(
    res.weightDepth = -centerViewPos.z;
 
    vec3 c = centerViewPos;
-   float radius = value.y > 0.0 ? value.y : length(viewPos - centerViewPos);
+   float radius = value.y > 0.0 ? value.y : length(rayDir * exitDistance - centerViewPos);
 
    // Ray from the camera (origin) along rayDir (unit). Solve
    // t^2 - 2 (rayDir·c) t + (|c|^2 - r^2) = 0 for the entry/exit distances.
@@ -34,14 +35,10 @@ RayVolumeResult rayVolumeShade(
    float tNear = b - sq;
    float tFar = b + sq;
 
-   // Distance along the ray at which the opaque scene is hit (depth is measured
-   // along -z, so convert with the ray's z component).
-   float tScene = sceneDepth / max(-rayDir.z, 1e-4);
-
    // Visible span of gas: clamp against the camera (inside the sphere) and the
    // opaque scene in front of the far side.
    float entry = max(tNear, 0.0);
-   float exit = min(tFar, tScene);
+   float exit = min(tFar, sceneDistance);
    float chord = max(exit - entry, 0.0);
    if (chord <= 0.0) {
       return res;

@@ -9,7 +9,6 @@
 #include <cstddef>
 #include <stdexcept>
 #include <glm/gtc/epsilon.hpp>
-#include <glm/gtc/quaternion.hpp>
 #include "math/DekkerArithmetic.h"
 
 namespace {
@@ -30,52 +29,6 @@ void spliceSurfaceBody(std::string& source, const std::string& body) {
         throw std::runtime_error("CDLOD stage is missing the surface marker");
     }
     source.replace(markerPos, std::char_traits<char>::length(s_surfaceMarker), body);
-}
-
-// Rebuilds the interpolated pose the body will be drawn at this frame and puts
-// the camera into that body's own frame. Selection has to measure against the
-// pose the geometry actually lands at, and the vertex stage has to undo exactly
-// the placement made here, so this is where both are decided rather than a
-// duplicate of a decision made in the shader.
-//
-// All double here, so unlike the mesh stages this needs no Dekker split:
-// subtracting two world positions of similar magnitude is exact enough on its
-// own. What is narrowed is the rotation, and deliberately: it is inverted at the
-// width it will be uploaded at, so the shader's forward rotation and this
-// backward one are true inverses. Inverting the exact rotation instead would
-// leave them a part in ten million apart, and a part in ten million of the
-// camera's distance from a planet's centre is most of a metre.
-CdlodBodyPose bodyRenderPose(const MeshTransform& transform,
-                             const FrameRenderParams& params) {
-    // Signed, so a body stamped with a time ahead of the frame's extrapolates
-    // backwards instead of wrapping into an enormous forward step.
-    const double stepDelta{static_cast<double>(
-        static_cast<int64_t>(params.time) - static_cast<int64_t>(transform.time))};
-    const double deltaTime{stepDelta + params.timeRemainder};
-
-    const glm::dvec3 bodyPosition{transform.position + transform.velocity * deltaTime};
-    const glm::dquat spin{
-        glm::angleAxis(transform.angVel * deltaTime, transform.angVelAxis)};
-    const glm::dmat3 bodyRotation{glm::mat3{glm::mat3_cast(spin * transform.orientation)}};
-
-    // Scale comes back from float too: the vertex stage reads the copy in the
-    // shared SSBO, and a scale that differed in its last bit would tilt the
-    // whole cancellation by that much of the body's radius.
-    const glm::dvec3 scale{glm::vec3{transform.scale}};
-
-    // Undoes the vertex stage's steps in reverse: world offset, then the
-    // rotation about the centre of rotation, then the scale. The centre of
-    // rotation appears on both sides of that stage and cancels, so its own width
-    // never enters.
-    const glm::dvec3 relative{params.camPos - bodyPosition - transform.centerOfRotation};
-    // A true inverse, not a transpose: narrowing to float leaves the rotation a
-    // part in ten million off orthonormal, worth half a metre of camera position
-    // at a planet's radius.
-    const glm::dmat3 inverseBodyRotation{glm::inverse(bodyRotation)};
-    const glm::dvec3 rotated{inverseBodyRotation * relative};
-
-    return CdlodBodyPose{bodyRotation, (rotated + transform.centerOfRotation) / scale,
-                         inverseBodyRotation, scale};
 }
 
 // Splits a body-sized value into the float pair the vertex stage reads as one
@@ -102,7 +55,7 @@ constexpr double k_casterBoundsMargin{1.5};
 
 // A caster volume as the body's own frame sees it. Four of these against thousands
 // of patches, so it is the volumes that are carried across rather than the bounds.
-Cylinder volumeInBodySpace(const Cylinder& volume, const CdlodBodyPose& pose) {
+Cylinder volumeInBodySpace(const Cylinder& volume, const BodyPose& pose) {
     assert(glm::all(glm::epsilonEqual(pose.m_scale, glm::dvec3{pose.m_scale.x}, 1e-12)) &&
            "Non-uniform scale: a bounding sphere would not stay one in the body's frame");
     const double scale{pose.m_scale.x};
@@ -428,13 +381,15 @@ void CdlodHandler::removeInstance(std::weak_ptr<CdlodInstance> instanceWeak) {
 void CdlodHandler::update(const FrameRenderParams& params,
                           const std::vector<Cylinder>& casterVolumes) {
     for (const std::shared_ptr<CdlodSurface>& surface : m_surfaces) {
-        selectVisibleNodes(*surface, params, casterVolumes);
+        selectVisibleNodes(*surface, params.time, params.timeRemainder, params.camPos,
+                           casterVolumes);
         sortPatchesByTier(*surface, casterVolumes.size());
         uploadSelection(*surface);
     }
 }
 
-void CdlodHandler::selectVisibleNodes(CdlodSurface& surface, const FrameRenderParams& params,
+void CdlodHandler::selectVisibleNodes(CdlodSurface& surface, uint64_t time,
+                                      double timeRemainder, const glm::dvec3& camPos,
                                       const std::vector<Cylinder>& casterVolumes) {
     surface.m_selectedLeaves.clear();
     surface.m_selectedPatches.clear();
@@ -449,7 +404,7 @@ void CdlodHandler::selectVisibleNodes(CdlodSurface& surface, const FrameRenderPa
 
         const MeshTransform& transform{
             m_ssboManager->getMeshTransform(instance.m_ssboIndex)};
-        instance.m_pose = bodyRenderPose(transform, params);
+        instance.m_pose = bodyRenderPose(transform, time, timeRemainder, camPos);
 
         // Into the body's frame once rather than per patch: the frame the tree
         // already works in.
