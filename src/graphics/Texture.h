@@ -16,7 +16,7 @@
  * extremes are not known in advance, which fixed point could only take by
  * carrying a scale alongside it to map onto [0, 1].
  */
-enum class TextureFormat { R16, RG16F, RGB8, RGB16F, RGBA8 };
+enum class TextureFormat { R16, RG16F, RGB8, RGB16F, RGBA8, RGBA16 };
 
 enum class TextureFilter { Nearest, Linear };
 

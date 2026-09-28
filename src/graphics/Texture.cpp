@@ -11,6 +11,7 @@ TextureLayout textureLayout(TextureFormat format) {
         case TextureFormat::RGB8:  return {GL_RGB8, GL_RGB, GL_UNSIGNED_BYTE};
         case TextureFormat::RGB16F: return {GL_RGB16F, GL_RGB, GL_FLOAT};
         case TextureFormat::RGBA8: return {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE};
+        case TextureFormat::RGBA16: return {GL_RGBA16, GL_RGBA, GL_UNSIGNED_SHORT};
     }
     throw std::runtime_error("Texture: unknown format");
 }
