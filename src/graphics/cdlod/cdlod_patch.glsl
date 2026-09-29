@@ -20,6 +20,8 @@
 // appears -- it is what cancels when the camera is written in the body's frame.
 
 #include "../shared_shaders/dekker_arithmetic.glsl"
+// The physics clock, for a surface body that animates
+#include "../shared_shaders/frame_time.glsl"
 
 // Everything true of a whole body, as CdlodHandler uploads it. Mirrors
 // CdlodHandler::CdlodInstanceData, which the static_assert there pins to this

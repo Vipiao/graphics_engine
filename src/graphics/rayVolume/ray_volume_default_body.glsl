@@ -14,7 +14,8 @@ RayVolumeResult rayVolumeShade(
    vec3 rayDir, float exitDistance, float sceneDistance,
    vec3 opaqueColor, vec4 value, vec4 color, vec2 uv,
    vec3 centerViewPos, Df centerDistance,
-   mat3 rayVolumeSpaceToView, Df3 cameraLocalPosition)
+   mat3 rayVolumeSpaceToView, Df3 cameraLocalPosition,
+   sampler2D sceneDepthMap, sampler2D opaqueColorMap)
 {
    RayVolumeResult res;
    res.color = vec3(0.0);
