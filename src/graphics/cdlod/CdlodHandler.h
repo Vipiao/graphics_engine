@@ -111,13 +111,14 @@ struct CdlodSurfaceTexture {
     int m_unit{0};
 };
 
-// A scalar the snippet reads. Enough to hand a snippet the constants its data
-// was generated against, which is the whole reason it exists: a tile size or a
-// height range written into the GLSL by hand is a second source of truth for a
+// A scalar or a vec3 the snippet reads. Enough to hand a snippet the constants its
+// data was generated against, which is the whole reason it exists: a tile size or
+// a height range written into the GLSL by hand is a second source of truth for a
 // number the caller already has.
 struct CdlodSurfaceUniform {
     std::string m_name;
-    float m_value{0.0f};
+    glm::vec3 m_value{0.0f};
+    int m_components{1};   // 1 reads m_value.x as a float, 3 all of it as a vec3
 };
 
 /**
@@ -237,6 +238,8 @@ public:
                                const std::string& samplerName, const CubeTextureSpec& spec);
     void setSurfaceUniform(std::weak_ptr<CdlodSurface> surface, const std::string& name,
                            float value);
+    void setSurfaceUniform(std::weak_ptr<CdlodSurface> surface, const std::string& name,
+                           const glm::vec3& value);
 
     // The surface owns the instance; the caller holds a weak handle that expires
     // when it is removed, so a stale handle can be recognised rather than
@@ -276,6 +279,11 @@ public:
     std::pair<bool, std::string> reloadShaders();
 
 private:
+    // Sets the uniform the snippet reads under the same name, or adds it; both
+    // public setters end here
+    void storeSurfaceUniform(std::weak_ptr<CdlodSurface> surface,
+                             CdlodSurfaceUniform uniform);
+
     // Files a texture the store has already made under its sampler name, taking
     // over the unit of whatever it replaces. The shape is settled by the time it
     // arrives, so both public setters end here.

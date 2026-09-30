@@ -427,6 +427,12 @@ void GraphicsEngine::setCdlodSurfaceUniform(std::weak_ptr<CdlodSurface> surface,
     m_cdlodHandler->setSurfaceUniform(std::move(surface), name, value);
 }
 
+void GraphicsEngine::setCdlodSurfaceUniform(std::weak_ptr<CdlodSurface> surface,
+                                            const std::string& name,
+                                            const glm::vec3& value) {
+    m_cdlodHandler->setSurfaceUniform(std::move(surface), name, value);
+}
+
 void GraphicsEngine::setCdlodWireframe(bool wireframe) {
     m_cdlodHandler->setWireframe(wireframe);
 }

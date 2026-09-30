@@ -51,5 +51,5 @@ void main() {
    // exactly the colour it was given.
    gAlbedo = vec4(vert_color.rgb * shading.colour, 0.0);
    gNormal = vec4(viewNormal * 0.5 + 0.5, shading.roughness);
-   gMaterial = vec4(vert_emissiveScalar, 1.0, 0.0, vert_color.a);
+   gMaterial = vec4(max(vert_emissiveScalar, shading.emissive), 1.0, 0.0, vert_color.a);
 }

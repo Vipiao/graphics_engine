@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <stdexcept>
 #include <glm/gtc/epsilon.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include "math/DekkerArithmetic.h"
 
 namespace {
@@ -315,18 +316,28 @@ void CdlodHandler::adoptSurfaceTexture(CdlodSurface& surface,
 
 void CdlodHandler::setSurfaceUniform(std::weak_ptr<CdlodSurface> surfaceWeak,
                                      const std::string& name, float value) {
+    storeSurfaceUniform(std::move(surfaceWeak), CdlodSurfaceUniform{name, glm::vec3{value}, 1});
+}
+
+void CdlodHandler::setSurfaceUniform(std::weak_ptr<CdlodSurface> surfaceWeak,
+                                     const std::string& name, const glm::vec3& value) {
+    storeSurfaceUniform(std::move(surfaceWeak), CdlodSurfaceUniform{name, value, 3});
+}
+
+void CdlodHandler::storeSurfaceUniform(std::weak_ptr<CdlodSurface> surfaceWeak,
+                                       CdlodSurfaceUniform uniform) {
     const std::shared_ptr<CdlodSurface> surface{surfaceWeak.lock()};
     if (!surface) {
         throw std::runtime_error("CdlodHandler::setSurfaceUniform: surface has expired");
     }
 
     for (CdlodSurfaceUniform& existing : surface->m_uniforms) {
-        if (existing.m_name == name) {
-            existing.m_value = value;
+        if (existing.m_name == uniform.m_name) {
+            existing = std::move(uniform);
             return;
         }
     }
-    surface->m_uniforms.push_back(CdlodSurfaceUniform{name, value});
+    surface->m_uniforms.push_back(std::move(uniform));
 }
 
 void CdlodHandler::removeSurface(std::weak_ptr<CdlodSurface> surfaceWeak) {
@@ -485,7 +496,12 @@ void CdlodHandler::applySurfaceInputs(const CdlodSurface& surface, unsigned int 
 
     for (const CdlodSurfaceUniform& uniform : surface.m_uniforms) {
         const GLint location{glGetUniformLocation(program, uniform.m_name.c_str())};
-        if (location != -1) glUniform1f(location, uniform.m_value);
+        if (location == -1) continue;
+        if (uniform.m_components == 3) {
+            glUniform3fv(location, 1, glm::value_ptr(uniform.m_value));
+        } else {
+            glUniform1f(location, uniform.m_value.x);
+        }
     }
 }
 

@@ -22,6 +22,8 @@
 #include "../shared_shaders/dekker_arithmetic.glsl"
 // The physics clock, for a surface body that animates
 #include "../shared_shaders/frame_time.glsl"
+// For a surface that shades itself, to light it as the lighting stage would
+#include "../shared_shaders/phong_lighting.glsl"
 
 // Everything true of a whole body, as CdlodHandler uploads it. Mirrors
 // CdlodHandler::CdlodInstanceData, which the static_assert there pins to this
@@ -101,6 +103,8 @@ struct CdlodSurfaceShading {
    vec3 normal;      // unit, in the body's own frame
    vec3 colour;      // tints the body's colour; white leaves it alone
    float roughness;  // 0 = mirror, 1 = fully matte
+   // 0 = lit, 1 = shown as its colour, for a surface that shades itself
+   float emissive;
 };
 
 // The injected surface body turns a crude point into geometry:

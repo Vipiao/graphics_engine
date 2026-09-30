@@ -240,6 +240,8 @@ public:
                                     const CubeTextureSpec& spec);
     void setCdlodSurfaceUniform(std::weak_ptr<CdlodSurface> surface,
                                 const std::string& name, float value);
+    void setCdlodSurfaceUniform(std::weak_ptr<CdlodSurface> surface,
+                                const std::string& name, const glm::vec3& value);
     // Debug view of the subdivision: wireframe patches tinted by quadtree level.
     // Scoped to the CDLOD instances, unlike setTriangleRenderMode above.
     void setCdlodWireframe(bool wireframe);
@@ -264,6 +266,8 @@ public:
     // Takes effect from the next lighting pass
     void setLightIntensity(const LightIntensity& intensity);
     const LightIntensity& getLightIntensity() const;
+    // The direction the light travels, in world axes
+    const glm::dvec3& getLightDirection() const { return m_lightDirection; }
 
     // Shader reloading
     std::pair<bool, std::string> reloadShaders();
