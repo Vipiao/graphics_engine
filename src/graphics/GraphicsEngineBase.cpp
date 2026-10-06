@@ -109,6 +109,9 @@ GraphicsEngineBase::GraphicsEngineBase(TimeHandler* timeHandler, Mode mode,
 
    glfwWindowHint(GLFW_STENCIL_BITS, 8); // Request 8 stencil bits
 
+   // Hidden until the first frame is drawn, so an empty window is never shown.
+   glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+
    // Try to bypass compositor on Linux
    //glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
    //glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
@@ -304,6 +307,9 @@ void GraphicsEngineBase::checkGLErrors() {
 }
 
 void GraphicsEngineBase::swapBuffers() {
+   if (m_frameNum == 0) {
+      glfwShowWindow(m_window);
+   }
    glfwSwapBuffers(m_window);
 }
 
