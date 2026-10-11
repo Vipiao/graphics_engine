@@ -65,8 +65,8 @@ int main() {
                                  &cube.tangents, &cube.uvs, &cube.colors);
 
     // An identity camera orientation looks along +Y with +Z up.
-    engine.getCamPos() = glm::dvec3(0.0, -5.0, 1.5);
-    engine.getCamOri() = glm::dquat(1.0, 0.0, 0.0, 0.0);
+    engine.setCamPos(glm::dvec3(0.0, -5.0, 1.5));
+    engine.setCamOri(glm::dquat(1.0, 0.0, 0.0, 0.0));
 
     engine.updateMeshTransform(
         meshId,

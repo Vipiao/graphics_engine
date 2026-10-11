@@ -64,8 +64,9 @@ public:
     GLFWwindow* getWindow() { return getGraphicsEngineBase()->m_window; }
     unsigned int getScreenWidth() { return getGraphicsEngineBase()->m_screen_width; }
     unsigned int getScreenHeight() { return getGraphicsEngineBase()->m_screen_height; }
-    glm::dvec3& getCamPos() { return getGraphicsEngineBase()->m_camPos; }
-    glm::dvec3& getCamVel() { return getGraphicsEngineBase()->m_camVel; }
+    const glm::dvec3& getCamPos() const { return getGraphicsEngineBase()->m_camPos; }
+    const glm::dvec3& getCamVel() const { return getGraphicsEngineBase()->m_camVel; }
+    void setCamPos(const glm::dvec3& position) { getGraphicsEngineBase()->m_camPos = position; }
     // Frames per second actually achieved. This is the rate to convert with:
     // a windowed surface is routinely throttled below the monitor's mode, and
     // a nominal rate makes every seconds-to-frames conversion run at the ratio
@@ -78,7 +79,8 @@ public:
     }
     // The monitor mode's refresh rate; for pacing against the display only.
     int getMonitorRefreshRate() { return getGraphicsEngineBase()->m_monitorRefreshRate; }
-    glm::dquat& getCamOri() { return getGraphicsEngineBase()->m_camOri; }
+    const glm::dquat& getCamOri() const { return getGraphicsEngineBase()->m_camOri; }
+    void setCamOri(const glm::dquat& orientation) { getGraphicsEngineBase()->m_camOri = orientation; }
     uint64_t getFrameNum() { return getGraphicsEngineBase()->m_frameNum; }
     double& getFieldOfView() { return getGraphicsEngineBase()->m_fieldOfView; }
     // Panini projection strengths. 0 = standard rectilinear (off), 1 = max distortion.
