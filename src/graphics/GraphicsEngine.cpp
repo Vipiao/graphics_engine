@@ -14,6 +14,7 @@
 #include "utils/HashFunctions.h"
 #include <iostream>
 #include <filesystem>
+#include <stdexcept>
 
 GraphicsEngine::GraphicsEngine(
     TimeHandler* timeHandler,
@@ -339,6 +340,16 @@ void GraphicsEngine::releaseInstanceGeometry(std::weak_ptr<Geometry> geometry) {
 int GraphicsEngine::createInstanceTexture(std::weak_ptr<Geometry> geometry,
                                           const std::string& texturePath) {
     return m_instanceHandler->createTexture(std::move(geometry), texturePath);
+}
+
+int GraphicsEngine::createInstanceTexture(std::weak_ptr<Geometry> geometry,
+                                          const TextureSpec& spec) {
+    const std::shared_ptr<Geometry> registered{geometry.lock()};
+    if (!registered) {
+        throw std::runtime_error("GraphicsEngine::createInstanceTexture: geometry has expired");
+    }
+
+    return registered->addTexture(m_textureStore->create(spec));
 }
 
 size_t GraphicsEngine::createRayVolumeMaterial(const std::string& bodySnippetPath) {

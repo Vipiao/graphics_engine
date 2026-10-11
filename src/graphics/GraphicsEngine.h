@@ -175,6 +175,9 @@ public:
     // pixels are loaded once and shared.
     int createInstanceTexture(std::weak_ptr<Geometry> geometry,
                               const std::string& texturePath);
+    // The same, for pixels generated at runtime rather than loaded from a file.
+    int createInstanceTexture(std::weak_ptr<Geometry> geometry,
+                              const TextureSpec& spec);
 
     // Ray-volume resources: proxy-geometry volumetric effects composited with the
     // transparency (OIT) pass. A material is an injected shading body; geometries
