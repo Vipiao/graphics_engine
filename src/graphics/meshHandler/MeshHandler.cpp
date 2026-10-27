@@ -616,12 +616,7 @@ void MeshHandler::renderGeometryHelper(ShaderProgram& program,
       throw std::runtime_error("Camera position Dekker uniforms not found in shader");
    }
    {
-      typedef DekkerArithmetic<float> DekkerFloat;
-      DekkerFloat::DekkerNumber camX(params.camPos.x);
-      DekkerFloat::DekkerNumber camY(params.camPos.y);
-      DekkerFloat::DekkerNumber camZ(params.camPos.z);
-      glm::vec3 camPosHigh(camX.main, camY.main, camZ.main);
-      glm::vec3 camPosLow(camX.error, camY.error, camZ.error);
+      const auto [camPosHigh, camPosLow] = splitDekker(params.camPos);
       glUniform3fv(cameraPosHighLoc, 1, glm::value_ptr(camPosHigh));
       glUniform3fv(cameraPosLowLoc, 1, glm::value_ptr(camPosLow));
    }

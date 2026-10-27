@@ -28,3 +28,6 @@ struct BodyPose {
 // timeRemainder how far into the next one it is, camPos the camera in world space.
 BodyPose bodyRenderPose(const MeshTransform& transform, uint64_t time, double timeRemainder,
                         const glm::dvec3& camPos);
+
+// Narrowed to float, as std430 lays out a mat3.
+glm::mat3x4 paddedRotation(const glm::dmat3& rotation);

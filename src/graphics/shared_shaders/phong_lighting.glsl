@@ -4,6 +4,8 @@
 // lighting passes so they shade identically. The strength constants live here
 // as the single point of tuning.
 
+#include "math_constants.glsl"
+
 // Metallic-roughness parameterization (Burley 2012; Karis 2013, "Real Shading
 // in Unreal Engine 4"; glTF 2.0). Almost every dielectric reflects about this
 // much head-on, so one number covers all of them, and a conductor reflects its
@@ -12,7 +14,6 @@
 const float k_dielectricF0 = 0.04;
 
 const float k_ambient = 0.3;
-const float k_pi = 3.141592653589793;
 
 // Reflectance at normal incidence: the one value that separates the two
 // families of material.

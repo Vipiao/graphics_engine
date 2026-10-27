@@ -1,0 +1,74 @@
+// scatter_cull.comp
+#version 460 core
+
+// Picks each item's mesh by distance: the first LOD it is within, else the
+// kind's impostor up to its distance, else nothing. A drawn item is appended to
+// its mesh's part of the visible list and counted in that mesh's draw command.
+// One workgroup per patch.
+
+#include "scatter_data.glsl"
+
+layout(local_size_x = 64) in;
+
+layout(std430, binding = SCATTER_ITEM_BINDING) readonly buffer ScatterItemBuffer {
+    ScatterItem items[];
+};
+layout(std430, binding = SCATTER_COUNT_BINDING) readonly buffer ScatterCountBuffer {
+    uint counts[];
+};
+layout(std430, binding = SCATTER_INSTANCE_BINDING) readonly buffer ScatterInstanceBuffer {
+    ScatterInstanceData instances[];
+};
+layout(std430, binding = SCATTER_PATCH_BINDING) readonly buffer ScatterPatchBuffer {
+    ScatterPatchData patches[];
+};
+layout(std430, binding = SCATTER_KIND_BINDING) readonly buffer ScatterKindBuffer {
+    ScatterKindData kinds[];
+};
+layout(std430, binding = SCATTER_LOD_DISTANCE_BINDING) readonly buffer ScatterLodDistanceBuffer {
+    float lodDistances[];
+};
+layout(std430, binding = SCATTER_COMMAND_BINDING) buffer ScatterCommandBuffer {
+    ScatterDrawCommand commands[];
+};
+layout(std430, binding = SCATTER_VISIBLE_BINDING) writeonly buffer ScatterVisibleBuffer {
+    uvec2 visible[];
+};
+
+uniform uint u_itemsPerPatch;
+uniform uint u_kindCount;
+
+void main() {
+    const uint patchIndex = gl_WorkGroupID.x;
+    const ScatterPatchData patchData = patches[patchIndex];
+    const vec3 bodyScale = instances[patchData.instance].bodyScale.xyz;
+    const uint itemCount = counts[patchData.slot];
+
+    for (uint local = gl_LocalInvocationID.x; local < itemCount; local += gl_WorkGroupSize.x) {
+        const uint itemIndex = patchData.slot * u_itemsPerPatch + local;
+        const ScatterItem item = items[itemIndex];
+        // A snippet may name a kind the set lacks
+        if (item.kind >= u_kindCount) continue;
+        const ScatterKindData kind = kinds[item.kind];
+
+        // In real metres, like the LOD distances
+        const float distance =
+            length((patchData.cameraOffset + item.positionScale.xyz) * bodyScale);
+
+        uint lod = 0u;
+        while (lod < kind.lodCount && distance > lodDistances[kind.firstMesh + lod]) {
+            ++lod;
+        }
+
+        uint mesh = kind.firstMesh + lod;
+        if (lod == kind.lodCount) {
+            if (kind.impostorMesh == SCATTER_NO_MESH ||
+                distance > lodDistances[kind.impostorMesh]) {
+                continue;
+            }
+            mesh = kind.impostorMesh;
+        }
+        const uint place = atomicAdd(commands[mesh].instanceCount, 1u);
+        visible[commands[mesh].baseInstance + place] = uvec2(itemIndex, patchIndex);
+    }
+}

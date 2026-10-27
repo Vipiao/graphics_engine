@@ -22,14 +22,8 @@ void setInstanceFrameUniforms(unsigned int programID, const FrameRenderParams& p
         glUniform1f(loc, static_cast<float>(params.timeRemainder));
 
     // Camera position split into high/low floats (Dekker) so camera-relative
-    // vertex math keeps precision far from the origin. The DekkerNumber(double)
-    // constructor captures the low-order bits; passing a float would drop them.
-    typedef DekkerArithmetic<float> DekkerFloat;
-    const DekkerFloat::DekkerNumber camX(params.camPos.x);
-    const DekkerFloat::DekkerNumber camY(params.camPos.y);
-    const DekkerFloat::DekkerNumber camZ(params.camPos.z);
-    const glm::vec3 camPosHigh(camX.main, camY.main, camZ.main);
-    const glm::vec3 camPosLow(camX.error, camY.error, camZ.error);
+    // vertex math keeps precision far from the origin.
+    const auto [camPosHigh, camPosLow] = splitDekker(params.camPos);
     if ((loc = glGetUniformLocation(programID, "u_cameraPositionHigh")) != -1)
         glUniform3fv(loc, 1, glm::value_ptr(camPosHigh));
     if ((loc = glGetUniformLocation(programID, "u_cameraPositionLow")) != -1)

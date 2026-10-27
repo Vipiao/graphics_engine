@@ -96,12 +96,9 @@ void SSBOManager::updateMeshTransform(
     MeshData data{};
 
     // Convert position to Dekker number
-    using DekkerFloat = DekkerArithmetic<float>;
-    DekkerFloat::DekkerNumber posX(position.x);
-    DekkerFloat::DekkerNumber posY(position.y); 
-    DekkerFloat::DekkerNumber posZ(position.z);
-    data.positionHigh = glm::vec4(posX.main, posY.main, posZ.main, 0.0f);
-    data.positionLow = glm::vec4(posX.error, posY.error, posZ.error, 0.0f);
+    const auto [positionHigh, positionLow] = splitDekker(position);
+    data.positionHigh = glm::vec4(positionHigh, 0.0f);
+    data.positionLow = glm::vec4(positionLow, 0.0f);
 
     data.velocity = glm::vec4(velocity, 0.0);
     glm::dvec4 orientationVector{ orientation.x, orientation.y, orientation.z, orientation.w };

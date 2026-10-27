@@ -109,6 +109,8 @@ struct CdlodSurfaceTexture {
     // rather than the renderer being what knows the shape it declared.
     std::weak_ptr<Texture> m_texture;
     int m_unit{0};
+    // Removed with the surface; a texture the caller passed in stays theirs
+    bool m_madeBySurface{true};
 };
 
 // A scalar or a vec3 the snippet reads. Enough to hand a snippet the constants its
@@ -236,6 +238,10 @@ public:
                            const std::string& samplerName, const TextureSpec& spec);
     void setSurfaceCubeTexture(std::weak_ptr<CdlodSurface> surface,
                                const std::string& samplerName, const CubeTextureSpec& spec);
+    // The same with a texture the caller already made in the store, so one
+    // texture can be sampled by several renderers. It stays the caller's to remove.
+    void setSurfaceTexture(std::weak_ptr<CdlodSurface> surface,
+                           const std::string& samplerName, std::weak_ptr<Texture> texture);
     void setSurfaceUniform(std::weak_ptr<CdlodSurface> surface, const std::string& name,
                            float value);
     void setSurfaceUniform(std::weak_ptr<CdlodSurface> surface, const std::string& name,
@@ -286,9 +292,9 @@ private:
 
     // Files a texture the store has already made under its sampler name, taking
     // over the unit of whatever it replaces. The shape is settled by the time it
-    // arrives, so both public setters end here.
+    // arrives, so every public setter ends here.
     void adoptSurfaceTexture(CdlodSurface& surface, const std::string& samplerName,
-                             std::weak_ptr<Texture> texture);
+                             std::weak_ptr<Texture> texture, bool madeBySurface);
 
     // Binding point of the instance buffer; mirrors the binding declared in
     // cdlod_patch.glsl. Binding 0 is the shared transform SSBO.

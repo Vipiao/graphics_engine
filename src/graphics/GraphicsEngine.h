@@ -12,6 +12,8 @@
 #include "cdlod/CdlodConfig.h"
 // CdlodPatchBounds.h carries the caller's shape hook and the patch frame type.
 #include "cdlod/CdlodPatchBounds.h"
+// ScatterConfig.h carries the kinds and items callers hand the scatter renderer.
+#include "scatter/ScatterConfig.h"
 // Texture2D.h provides TextureSpec, which callers fill in to hand a surface
 // generated image data.
 #include "Texture2D.h"
@@ -37,6 +39,10 @@ class ShadowRenderer;
 class CdlodHandler;
 struct CdlodInstance;
 struct CdlodSurface;
+class ScatterHandler;
+struct ScatterSet;
+struct ScatterInstance;
+struct ScatterPatch;
 
 class TimeHandler;
 
@@ -181,6 +187,13 @@ public:
     int createInstanceTexture(std::weak_ptr<Geometry> geometry,
                               const TextureSpec& spec);
 
+    // A texture from pixels generated at runtime, to hand to several renderers
+    // (a CDLOD surface, a scatter set's snippet) so they sample one copy. The
+    // caller removes it, after everything it was handed to.
+    std::weak_ptr<Texture2D> createSharedTexture(const TextureSpec& spec);
+    std::weak_ptr<TextureCube> createSharedCubeTexture(const CubeTextureSpec& spec);
+    void removeSharedTexture(std::weak_ptr<Texture> texture);
+
     // Ray-volume resources: proxy-geometry volumetric effects composited with the
     // transparency (OIT) pass. A material is an injected shading body; geometries
     // are proxy meshes for a material; instances carry the animated value vector
@@ -243,6 +256,12 @@ public:
     void setCdlodSurfaceCubeTexture(std::weak_ptr<CdlodSurface> surface,
                                     const std::string& samplerName,
                                     const CubeTextureSpec& spec);
+    // The same with a texture made by createSharedTexture, so the surface and
+    // others (a scatter set's snippet) sample one copy. It stays the caller's to
+    // remove.
+    void setCdlodSurfaceTexture(std::weak_ptr<CdlodSurface> surface,
+                                const std::string& samplerName,
+                                std::weak_ptr<Texture> texture);
     void setCdlodSurfaceUniform(std::weak_ptr<CdlodSurface> surface,
                                 const std::string& name, float value);
     void setCdlodSurfaceUniform(std::weak_ptr<CdlodSurface> surface,
@@ -256,6 +275,27 @@ public:
     // safe to change at any time. Must be even; throws if it cannot be used.
     void setCdlodPatchQuads(int patchQuads);
     int getCdlodPatchQuads() const;
+
+    // Scatter sets: many small objects placed in patches; see ScatterHandler.h.
+    // An instance puts a set on the body at ssboIndex. readSnippet returns the
+    // GLSL scatter_generate.comp splices in, and is called again on every reload.
+    std::weak_ptr<ScatterSet> createScatterSet(const ScatterSetConfig& config,
+                                               std::function<std::string()> readSnippet);
+    void removeScatterSet(std::weak_ptr<ScatterSet> set);
+    // For the snippet's sampler samplerName; set before adding patches. Stays the
+    // caller's to remove.
+    void setScatterSetTexture(std::weak_ptr<ScatterSet> set, const std::string& samplerName,
+                              std::weak_ptr<Texture> texture);
+    // For looking at by eye. False if any could not be written.
+    bool writeScatterImpostorImages(std::weak_ptr<ScatterSet> set,
+                                    const std::filesystem::path& directory) const;
+    std::weak_ptr<ScatterInstance> createScatterInstance(std::weak_ptr<ScatterSet> set,
+                                                         int ssboIndex);
+    void removeScatterInstance(std::weak_ptr<ScatterInstance> instance);
+    std::weak_ptr<ScatterPatch> addScatterPatch(std::weak_ptr<ScatterInstance> instance,
+                                                const glm::dvec3& origin,
+                                                const glm::uvec4& payload);
+    void removeScatterPatch(std::weak_ptr<ScatterPatch> patch);
 
     // Render parameter access
     std::pair<uint64_t, double> getRenderParameters() const { return {m_currentInterpolationTimeStep, m_interpolationTimeRemainder}; }
@@ -292,6 +332,7 @@ private:
     std::unique_ptr<InstanceHandler> m_instanceHandler;
     std::unique_ptr<RayVolumeHandler> m_rayVolumeHandler;
     std::unique_ptr<CdlodHandler> m_cdlodHandler;
+    std::unique_ptr<ScatterHandler> m_scatterHandler;
     std::unique_ptr<ShadowRenderer> m_shadowRenderer;
 
     // Render parameters for interpolation

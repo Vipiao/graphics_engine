@@ -188,7 +188,6 @@ void RayVolumeHandler::updateCameraLocal(VolumeGeometry& volume, uint64_t time,
     const std::vector<std::shared_ptr<Instance>>& instances{volume.geometry->m_instances};
     if (instances.empty()) return;
 
-    typedef DekkerArithmetic<float> DekkerFloat;
     volume.cameraLocal.resize(instances.size());
     for (const std::shared_ptr<Instance>& instance : instances) {
         const BodyPose pose{bodyRenderPose(
@@ -197,13 +196,11 @@ void RayVolumeHandler::updateCameraLocal(VolumeGeometry& volume, uint64_t time,
         const glm::dvec3 cameraLocal{glm::inverse(instance->m_localOrientation) *
             ((pose.m_cameraBodyPosition - instance->m_localPosition) * pose.m_scale)};
 
-        const DekkerFloat::DekkerNumber x{cameraLocal.x};
-        const DekkerFloat::DekkerNumber y{cameraLocal.y};
-        const DekkerFloat::DekkerNumber z{cameraLocal.z};
+        const auto [high, low] = splitDekker(cameraLocal);
         // Indexed as the draw indexes instances, by their slot in the buffer
         CameraLocal& camera{volume.cameraLocal[instance->m_bufferIndex]};
-        camera.high = glm::vec4{x.main, y.main, z.main, 0.0f};
-        camera.low = glm::vec4{x.error, y.error, z.error, 0.0f};
+        camera.high = glm::vec4{high, 0.0f};
+        camera.low = glm::vec4{low, 0.0f};
     }
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, volume.cameraLocalSSBO);

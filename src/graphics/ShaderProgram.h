@@ -30,16 +30,24 @@ private:
    static constexpr size_t s_tessControlStage{ 2 };
    static constexpr size_t s_tessEvaluationStage{ 3 };
    static constexpr size_t s_geometryStage{ 4 };
-   static constexpr size_t s_stageCount{ 5 };
+   // A compute program has only this stage; it runs with glDispatchCompute
+   // instead of drawing.
+   static constexpr size_t s_computeStage{ 5 };
+   static constexpr size_t s_stageCount{ 6 };
 
-   // Inserts the engine "#define"s (see s_maxTextureUnits) after the "#version" line.
-   static std::string injectEngineDefines(std::string code);
+   // Inserts the engine "#define"s (see s_maxTextureUnits), then this program's
+   // own (see addDefine), after the "#version" line.
+   std::string injectDefines(std::string code) const;
 
    // Recursively expands '#include "path"' lines, resolving paths relative to the
    // including file. Each file is expanded at most once per top-level load, so
    // repeated (and cyclic) includes expand to nothing.
    static std::string expandIncludes(
       const std::string& path, std::vector<std::string>& includedPaths);
+
+   // Throws unless the loaded stages make a program: either the compute stage
+   // alone, or at least a vertex and a fragment stage.
+   void checkStagesCanLink() const;
 
    // Compiles code as the given stage; throws on compile errors.
    void loadStage(size_t stageIndex, std::string code);
@@ -58,6 +66,8 @@ private:
    void cacheTextureUnitLocations();
 
    std::array<Stage, s_stageCount> m_stages{};
+   // "#define" lines added by addDefine, injected into every stage.
+   std::string m_defines{};
    unsigned int m_shaderProgram{ 0 };
    bool m_programIsLinked{ false };
    bool m_hasStoredPaths{ false };
@@ -67,16 +77,20 @@ public:
    // expandIncludes). Include paths are relative to the file that includes them.
    static std::string loadTextFileFromPath(std::string path);
    static void printWithLineNumbers(std::string code);
+   // In every stage loaded after this call, and on every reload.
+   void addDefine(const std::string& name, const std::string& value);
    void loadVertexShaderFromPath(std::string vertexCodePath);
    void loadFragmentShaderFromPath(std::string fragmentCodePath);
    void loadTessellationControlShaderFromPath(std::string tessContrCodePath);
    void loadTessellationEvaluationShaderFromPath(std::string tessEvalCodePath);
    void loadGeometryShaderFromPath(std::string geometryCodePath);
+   void loadComputeShaderFromPath(std::string computeCodePath);
    void loadVertexShader(std::string vertexCode);
    void loadFragmentShader(std::string fragmentCode);
    void loadTessellationControlShader(std::string tessContrCode);
    void loadTessellationEvaluationShader(std::string tessEvalCode);
    void loadGeometryShader(std::string geometryCode);
+   void loadComputeShader(std::string computeCode);
    void linkShaders();
    unsigned int getID();
    void use();

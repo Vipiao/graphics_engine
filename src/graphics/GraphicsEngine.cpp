@@ -9,6 +9,7 @@
 #include "instanceHandler/InstanceHandler.h"
 #include "rayVolume/RayVolumeHandler.h"
 #include "cdlod/CdlodHandler.h"
+#include "scatter/ScatterHandler.h"
 #include "TextureStore.h"
 #include "shadowRenderer/ShadowRenderer.h"
 #include "utils/HashFunctions.h"
@@ -59,6 +60,10 @@ GraphicsEngine::GraphicsEngine(
     // Create CDLOD handler (distance-subdivided cube-quadtree bodies)
     m_cdlodHandler = std::make_unique<CdlodHandler>(m_ssboManager.get(), m_textureStore.get());
 
+    // Create scatter handler (many small objects placed in patches)
+    m_scatterHandler =
+        std::make_unique<ScatterHandler>(m_ssboManager.get(), m_textureStore.get());
+
     // Create 2D mesh manager
     m_meshManager2D = std::make_unique<MeshManager2D>(m_textureStore.get());
 
@@ -89,6 +94,7 @@ GraphicsEngine::~GraphicsEngine() {
     // These must be destroyed in reverse dependency order
     m_meshManager2D.reset();
     m_rayVolumeHandler.reset();
+    m_scatterHandler.reset();
     m_cdlodHandler.reset();
     m_instanceHandler.reset();
     m_shadowRenderer.reset();
@@ -154,6 +160,9 @@ void GraphicsEngine::renderScene() {
     m_cdlodHandler->update(frameParams, m_shadowsEnabled ? m_shadowRenderer->getCasterVolumes()
                                                          : std::vector<Cylinder>{});
 
+    // Scattered items placed against the same camera and body poses.
+    m_scatterHandler->update(frameParams);
+
     unsigned int shadowMapTextureArray = 0;
 
     if (m_shadowsEnabled) {
@@ -175,6 +184,9 @@ void GraphicsEngine::renderScene() {
 
     // Render CDLOD bodies to G-buffer
     m_cdlodHandler->renderGeometry(frameParams);
+
+    // Render scattered items to G-buffer
+    m_scatterHandler->renderGeometry(frameParams);
 
     // End geometry pass and do lighting pass
     m_deferredRenderer->endGeometryPassAndRenderLighting(
@@ -352,6 +364,18 @@ int GraphicsEngine::createInstanceTexture(std::weak_ptr<Geometry> geometry,
     return registered->addTexture(m_textureStore->create(spec));
 }
 
+std::weak_ptr<Texture2D> GraphicsEngine::createSharedTexture(const TextureSpec& spec) {
+    return m_textureStore->create(spec);
+}
+
+std::weak_ptr<TextureCube> GraphicsEngine::createSharedCubeTexture(const CubeTextureSpec& spec) {
+    return m_textureStore->createCube(spec);
+}
+
+void GraphicsEngine::removeSharedTexture(std::weak_ptr<Texture> texture) {
+    m_textureStore->remove(std::move(texture));
+}
+
 size_t GraphicsEngine::createRayVolumeMaterial(const std::string& bodySnippetPath) {
     return m_rayVolumeHandler->createMaterial(bodySnippetPath);
 }
@@ -433,6 +457,12 @@ void GraphicsEngine::setCdlodSurfaceCubeTexture(std::weak_ptr<CdlodSurface> surf
     m_cdlodHandler->setSurfaceCubeTexture(std::move(surface), samplerName, spec);
 }
 
+void GraphicsEngine::setCdlodSurfaceTexture(std::weak_ptr<CdlodSurface> surface,
+                                            const std::string& samplerName,
+                                            std::weak_ptr<Texture> texture) {
+    m_cdlodHandler->setSurfaceTexture(std::move(surface), samplerName, std::move(texture));
+}
+
 void GraphicsEngine::setCdlodSurfaceUniform(std::weak_ptr<CdlodSurface> surface,
                                             const std::string& name, float value) {
     m_cdlodHandler->setSurfaceUniform(std::move(surface), name, value);
@@ -458,6 +488,45 @@ void GraphicsEngine::setCdlodPatchQuads(int patchQuads) {
 
 int GraphicsEngine::getCdlodPatchQuads() const {
     return m_cdlodHandler->getPatchQuads();
+}
+
+std::weak_ptr<ScatterSet> GraphicsEngine::createScatterSet(
+    const ScatterSetConfig& config, std::function<std::string()> readSnippet) {
+    return m_scatterHandler->createSet(config, std::move(readSnippet));
+}
+
+void GraphicsEngine::removeScatterSet(std::weak_ptr<ScatterSet> set) {
+    m_scatterHandler->removeSet(set);
+}
+
+void GraphicsEngine::setScatterSetTexture(std::weak_ptr<ScatterSet> set,
+                                          const std::string& samplerName,
+                                          std::weak_ptr<Texture> texture) {
+    m_scatterHandler->setSnippetTexture(std::move(set), samplerName, std::move(texture));
+}
+
+bool GraphicsEngine::writeScatterImpostorImages(std::weak_ptr<ScatterSet> set,
+                                                const std::filesystem::path& directory) const {
+    return m_scatterHandler->writeImpostorImages(std::move(set), directory);
+}
+
+std::weak_ptr<ScatterInstance> GraphicsEngine::createScatterInstance(
+    std::weak_ptr<ScatterSet> set, int ssboIndex) {
+    return m_scatterHandler->createInstance(set, ssboIndex);
+}
+
+void GraphicsEngine::removeScatterInstance(std::weak_ptr<ScatterInstance> instance) {
+    m_scatterHandler->removeInstance(instance);
+}
+
+std::weak_ptr<ScatterPatch> GraphicsEngine::addScatterPatch(
+    std::weak_ptr<ScatterInstance> instance, const glm::dvec3& origin,
+    const glm::uvec4& payload) {
+    return m_scatterHandler->addPatch(instance, origin, payload);
+}
+
+void GraphicsEngine::removeScatterPatch(std::weak_ptr<ScatterPatch> patch) {
+    m_scatterHandler->removePatch(patch);
 }
 
 int GraphicsEngine::loadModel(
@@ -642,6 +711,7 @@ std::pair<bool, std::string> GraphicsEngine::reloadShaders() {
    auto [success4, error4] = m_shadowRenderer->reloadShaders();
    auto [success5, error5] = m_rayVolumeHandler->reloadShaders();
    auto [success6, error6] = m_cdlodHandler->reloadShaders();
+   auto [success7, error7] = m_scatterHandler->reloadShaders();
 
    if (!success1) {
       allSuccess = false;
@@ -666,6 +736,10 @@ std::pair<bool, std::string> GraphicsEngine::reloadShaders() {
    if (!success6) {
       allSuccess = false;
       allErrors += "CdlodHandler: " + error6 + "\n";
+   }
+   if (!success7) {
+      allSuccess = false;
+      allErrors += "ScatterHandler: " + error7 + "\n";
    }
 
    return {allSuccess, allSuccess ?

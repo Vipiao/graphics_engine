@@ -32,19 +32,6 @@ void spliceSurfaceBody(std::string& source, const std::string& body) {
     source.replace(markerPos, std::char_traits<char>::length(s_surfaceMarker), body);
 }
 
-// Splits a body-sized value into the float pair the vertex stage reads as one
-// wide float. The same split every other camera-relative buffer in this renderer
-// is filled with, and the same one shared_shaders/dekker_arithmetic.glsl adds
-// back on the far side.
-std::pair<glm::vec3, glm::vec3> splitWide(const glm::dvec3& value) {
-    using DekkerFloat = DekkerArithmetic<float>;
-    const DekkerFloat::DekkerNumber x{value.x};
-    const DekkerFloat::DekkerNumber y{value.y};
-    const DekkerFloat::DekkerNumber z{value.z};
-
-    return {glm::vec3{x.main, y.main, z.main}, glm::vec3{x.error, y.error, z.error}};
-}
-
 // How much a patch's bounding sphere is widened before it is measured against a
 // caster volume. A body bounds its patches on the shape they stand on rather than
 // the shape they are drawn as, so terrain wandering across a patch can leave its
@@ -85,28 +72,20 @@ unsigned int casterTier(const std::vector<Cylinder>& bodyVolumes, const glm::dve
 // here rather than in the tree, which works in double throughout and has no
 // business knowing what an attribute can hold.
 CdlodPatch makePatch(const CdlodLeaf& leaf, int32_t instanceIndex) {
-    const auto [centreHigh, centreLow] = splitWide(leaf.m_frame.m_centre);
+    const auto [centreHigh, centreLow] = splitDekker(leaf.m_frame.m_centre);
 
     return CdlodPatch{centreHigh,   centreLow,     glm::vec3{leaf.m_frame.m_uAxis},
                       glm::vec3{leaf.m_frame.m_vAxis}, leaf.m_level, instanceIndex,
                       static_cast<float>(leaf.m_frameScale)};
 }
 
-// A mat3 in the column-per-vec4 shape std430 gives it, so the struct's own
-// layout matches what the shader reads without a rule about padding.
-glm::mat3x4 paddedColumns(const glm::dmat3& rotation) {
-    const glm::mat3 narrow{rotation};
-    return glm::mat3x4{glm::vec4{narrow[0], 0.0f}, glm::vec4{narrow[1], 0.0f},
-                       glm::vec4{narrow[2], 0.0f}};
-}
-
 CdlodInstanceData makeInstanceData(const CdlodInstance& instance) {
-    const auto [cameraHigh, cameraLow] = splitWide(instance.m_pose.m_cameraBodyPosition);
+    const auto [cameraHigh, cameraLow] = splitDekker(instance.m_pose.m_cameraBodyPosition);
 
     return CdlodInstanceData{glm::vec4{instance.m_config.m_baseColor},
                              glm::vec4{cameraHigh, 0.0f},
                              glm::vec4{cameraLow, 0.0f},
-                             paddedColumns(instance.m_pose.m_bodyRotation),
+                             paddedRotation(instance.m_pose.m_bodyRotation),
                              static_cast<float>(instance.m_config.m_lodRangeFactor),
                              instance.m_ssboIndex,
                              {0, 0}};
@@ -280,7 +259,7 @@ void CdlodHandler::setSurfaceTexture(std::weak_ptr<CdlodSurface> surfaceWeak,
         throw std::runtime_error("CdlodHandler::setSurfaceTexture: surface has expired");
     }
 
-    adoptSurfaceTexture(*surface, samplerName, m_textureStore->create(spec));
+    adoptSurfaceTexture(*surface, samplerName, m_textureStore->create(spec), true);
 }
 
 void CdlodHandler::setSurfaceCubeTexture(std::weak_ptr<CdlodSurface> surfaceWeak,
@@ -291,27 +270,42 @@ void CdlodHandler::setSurfaceCubeTexture(std::weak_ptr<CdlodSurface> surfaceWeak
         throw std::runtime_error("CdlodHandler::setSurfaceCubeTexture: surface has expired");
     }
 
-    adoptSurfaceTexture(*surface, samplerName, m_textureStore->createCube(spec));
+    adoptSurfaceTexture(*surface, samplerName, m_textureStore->createCube(spec), true);
+}
+
+void CdlodHandler::setSurfaceTexture(std::weak_ptr<CdlodSurface> surfaceWeak,
+                                     const std::string& samplerName,
+                                     std::weak_ptr<Texture> texture) {
+    const std::shared_ptr<CdlodSurface> surface{surfaceWeak.lock()};
+    if (!surface) {
+        throw std::runtime_error("CdlodHandler::setSurfaceTexture: surface has expired");
+    }
+
+    adoptSurfaceTexture(*surface, samplerName, std::move(texture), false);
 }
 
 void CdlodHandler::adoptSurfaceTexture(CdlodSurface& surface,
                                        const std::string& samplerName,
-                                       std::weak_ptr<Texture> texture) {
+                                       std::weak_ptr<Texture> texture, bool madeBySurface) {
     for (CdlodSurfaceTexture& existing : surface.m_textures) {
         if (existing.m_samplerName == samplerName) {
             // Keeps the unit, so replacing a texture cannot renumber the ones
-            // set after it. The old one goes back to the store rather than
-            // lingering unreferenced.
-            m_textureStore->remove(existing.m_texture);
+            // set after it. One the surface made goes back to the store rather
+            // than lingering unreferenced.
+            if (existing.m_madeBySurface) {
+                m_textureStore->remove(existing.m_texture);
+            }
             existing.m_texture = std::move(texture);
+            existing.m_madeBySurface = madeBySurface;
             return;
         }
     }
 
     // Units are handed out in order and never reused: nothing else binds a
     // texture during a CDLOD draw, so this surface has all of them to itself.
-    surface.m_textures.push_back(CdlodSurfaceTexture{
-        samplerName, std::move(texture), static_cast<int>(surface.m_textures.size())});
+    surface.m_textures.push_back(
+        CdlodSurfaceTexture{samplerName, std::move(texture),
+                            static_cast<int>(surface.m_textures.size()), madeBySurface});
 }
 
 void CdlodHandler::setSurfaceUniform(std::weak_ptr<CdlodSurface> surfaceWeak,
@@ -346,10 +340,13 @@ void CdlodHandler::removeSurface(std::weak_ptr<CdlodSurface> surfaceWeak) {
 
     for (auto it{m_surfaces.begin()}; it != m_surfaces.end(); ++it) {
         if (*it == surface) {
-            // The store owns what the snippet sampled, so hand it back rather
-            // than leaving it loaded for a surface that no longer exists.
+            // The store owns what the snippet sampled, so hand back what the
+            // surface made rather than leaving it loaded for a surface that no
+            // longer exists.
             for (const CdlodSurfaceTexture& texture : surface->m_textures) {
-                m_textureStore->remove(texture.m_texture);
+                if (texture.m_madeBySurface) {
+                    m_textureStore->remove(texture.m_texture);
+                }
             }
             m_surfaces.erase(it);
             return;

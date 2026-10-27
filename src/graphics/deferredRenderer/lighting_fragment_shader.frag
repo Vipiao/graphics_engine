@@ -89,7 +89,7 @@ float calculateSSAO(vec3 fragPos, vec3 normal) {
    // Rotate the sample kernel per pixel with a blue noise angle: neighboring
    // pixels get maximally different rotations, so undersampling shows up as
    // fine grain instead of banded artifacts.
-   float angle = blueNoise(ivec2(0, 0)) * 6.283185307179586;
+   float angle = blueNoise(ivec2(0, 0)) * k_twoPi;
    vec3 randomVec = vec3(cos(angle), sin(angle), 0.0);
    
    // Create TBN matrix

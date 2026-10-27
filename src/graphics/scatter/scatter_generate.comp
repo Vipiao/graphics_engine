@@ -1,0 +1,64 @@
+// scatter_generate.comp
+#version 460 core
+
+// Makes one patch's items, one thread per candidate. The caller's snippet,
+// spliced in at the marker, must define:
+//
+//    bool scatterCandidate(uvec4 payload, Df3 patchOrigin, uint candidate,
+//                          out vec3 position, out vec4 orientation,
+//                          out float scale, out uint kind);
+//
+//    payload      as passed to addPatch
+//    patchOrigin  as passed to addPatch, body frame, double-float
+//    candidate    0 .. itemsPerPatch - 1; decide from it and the payload alone,
+//                 so the answer is the same every run
+//    position     metres from the patch origin, body frame
+//    orientation  quaternion (x, y, z, w), mesh -> body
+//    scale        uniform scale on the mesh
+//    kind         index into the set's kinds
+//    returns      false to drop the candidate
+//
+// The snippet may declare samplers set by ScatterHandler::setSnippetTexture.
+
+#include "../shared_shaders/math_constants.glsl"
+#include "../shared_shaders/dekker_arithmetic.glsl"
+#include "scatter_data.glsl"
+
+layout(local_size_x = SCATTER_GENERATE_GROUP_SIZE) in;
+
+layout(std430, binding = SCATTER_ITEM_BINDING) writeonly buffer ScatterItemBuffer {
+    ScatterItem items[];
+};
+layout(std430, binding = SCATTER_PAYLOAD_BINDING) readonly buffer ScatterPayloadBuffer {
+    uvec4 payloads[];
+};
+layout(std430, binding = SCATTER_COUNT_BINDING) buffer ScatterCountBuffer {
+    uint counts[];
+};
+
+uniform uint u_slot;
+uniform uint u_itemsPerPatch;
+uniform vec3 u_patchOriginHigh;
+uniform vec3 u_patchOriginLow;
+
+__SCATTER_CANDIDATE__
+
+void main() {
+    const uint candidate = gl_GlobalInvocationID.x;
+    if (candidate >= u_itemsPerPatch) return;
+
+    vec3 position;
+    vec4 orientation;
+    float scale;
+    uint kind;
+    const Df3 patchOrigin = Df3(u_patchOriginHigh, u_patchOriginLow);
+    if (!scatterCandidate(payloads[u_slot], patchOrigin, candidate,
+                          position, orientation, scale, kind)) {
+        return;
+    }
+
+    // Packed in any order; one place per candidate, so never overflows
+    const uint place = atomicAdd(counts[u_slot], 1u);
+    items[u_slot * u_itemsPerPatch + place] =
+        ScatterItem(vec4(position, scale), orientation, kind, candidate, 0u, 0u);
+}

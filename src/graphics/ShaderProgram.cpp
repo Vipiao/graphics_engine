@@ -19,12 +19,13 @@ struct StageInfo {
    unsigned int m_glType;
    const char* m_label;
 };
-constexpr std::array<StageInfo, 5> s_stageInfo{ {
+constexpr std::array<StageInfo, 6> s_stageInfo{ {
    { GL_VERTEX_SHADER, "VERTEX" },
    { GL_FRAGMENT_SHADER, "FRAGMENT" },
    { GL_TESS_CONTROL_SHADER, "TESS_CONTR" },
    { GL_TESS_EVALUATION_SHADER, "TESS_EVAL" },
    { GL_GEOMETRY_SHADER, "GEOMETRY" },
+   { GL_COMPUTE_SHADER, "COMPUTE" },
 } };
 }
 
@@ -75,9 +76,13 @@ std::string ShaderProgram::loadTextFileFromPath(std::string path) {
    return expandIncludes(path, includedPaths);
 }
 
-std::string ShaderProgram::injectEngineDefines(std::string code) {
+void ShaderProgram::addDefine(const std::string& name, const std::string& value) {
+   m_defines += "#define " + name + " " + value + "\n";
+}
+
+std::string ShaderProgram::injectDefines(std::string code) const {
    std::string defines{
-      "#define MAX_TEXTURE_UNITS " + std::to_string(s_maxTextureUnits) + "\n" };
+      "#define MAX_TEXTURE_UNITS " + std::to_string(s_maxTextureUnits) + "\n" + m_defines };
    size_t versionPos{ code.find("#version") };
    if (versionPos == std::string::npos) {
       return defines + code;
@@ -110,7 +115,7 @@ void ShaderProgram::loadStage(size_t stageIndex, std::string code) {
    const StageInfo& info{ s_stageInfo[stageIndex] };
    Stage& stage{ m_stages[stageIndex] };
 
-   code = injectEngineDefines(code);
+   code = injectDefines(code);
    stage.m_shader = glCreateShader(info.m_glType);
    const char* codePtr{ code.c_str() };
    glShaderSource(stage.m_shader, 1, &codePtr, NULL);
@@ -157,6 +162,10 @@ void ShaderProgram::loadGeometryShaderFromPath(std::string geometryCodePath) {
    loadStageFromPath(s_geometryStage, geometryCodePath);
 }
 
+void ShaderProgram::loadComputeShaderFromPath(std::string computeCodePath) {
+   loadStageFromPath(s_computeStage, computeCodePath);
+}
+
 void ShaderProgram::loadVertexShader(std::string vertexCode) {
    loadStage(s_vertexStage, vertexCode);
 }
@@ -177,7 +186,21 @@ void ShaderProgram::loadGeometryShader(std::string geometryCode) {
    loadStage(s_geometryStage, geometryCode);
 }
 
-void ShaderProgram::linkShaders() {
+void ShaderProgram::loadComputeShader(std::string computeCode) {
+   loadStage(s_computeStage, computeCode);
+}
+
+void ShaderProgram::checkStagesCanLink() const {
+   if (m_stages[s_computeStage].m_isLoaded) {
+      // GL refuses to link a compute stage together with any drawing stage.
+      for (size_t ii = 0; ii < s_stageCount; ii++) {
+         if (ii != s_computeStage && m_stages[ii].m_isLoaded) {
+            std::cout << "ERROR: A compute program cannot have other stages." << std::endl;
+            throw std::runtime_error("ERROR: A compute program cannot have other stages.");
+         }
+      }
+      return;
+   }
    if (!m_stages[s_vertexStage].m_isLoaded) {
       std::cout << "ERROR: Cannot link shader program before loading vertex shader." << std::endl;
       throw std::runtime_error("ERROR: Cannot link shader program before loading vertex shader.");
@@ -186,6 +209,10 @@ void ShaderProgram::linkShaders() {
       std::cout << "ERROR: Cannot link shader program before loading fragment shader." << std::endl;
       throw std::runtime_error("ERROR: Cannot link shader program before loading fragment shader.");
    }
+}
+
+void ShaderProgram::linkShaders() {
+   checkStagesCanLink();
    // link shaders
    m_shaderProgram = glCreateProgram();
    for (const Stage& stage : m_stages) {
@@ -281,7 +308,11 @@ std::pair<bool, std::string> ShaderProgram::reloadShaders() {
       }
    }
 
-   if (m_stages[s_vertexStage].m_isLoaded && m_stages[s_fragmentStage].m_isLoaded) {
+   // Only link if every stage that failed to reload was optional; a missing
+   // required stage is already reported above.
+   const bool hasRequiredStages{ m_stages[s_computeStage].m_isLoaded
+      || (m_stages[s_vertexStage].m_isLoaded && m_stages[s_fragmentStage].m_isLoaded) };
+   if (hasRequiredStages) {
       try {
          linkShaders();
       } catch (const std::exception& e) {

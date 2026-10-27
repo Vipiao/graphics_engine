@@ -36,3 +36,9 @@ BodyPose bodyRenderPose(const MeshTransform& transform, uint64_t time, double ti
     return BodyPose{bodyRotation, (rotated + transform.centerOfRotation) / transform.scale,
                     inverseBodyRotation, transform.scale};
 }
+
+glm::mat3x4 paddedRotation(const glm::dmat3& rotation) {
+    const glm::mat3 narrow{rotation};
+    return glm::mat3x4{glm::vec4{narrow[0], 0.0f}, glm::vec4{narrow[1], 0.0f},
+                       glm::vec4{narrow[2], 0.0f}};
+}
