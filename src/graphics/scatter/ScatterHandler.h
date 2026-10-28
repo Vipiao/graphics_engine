@@ -1,6 +1,7 @@
 // ScatterHandler.h
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -18,7 +19,7 @@
 class ShaderProgram;
 class SSBOManager;
 class Texture;
-class Texture2D;
+class Texture2DArray;
 class TextureStore;
 struct FrameRenderParams;
 struct ScatterSet;
@@ -57,6 +58,8 @@ struct ScatterKindData {
     // LOD n is mesh m_firstMesh + n
     uint32_t m_firstMesh{0};
     uint32_t m_lodCount{0};
+    // About the item's origin, before its scale: holds every LOD and the
+    // impostor. Items whose sphere is out of view are not drawn.
     float m_boundingRadius{0.0f};
     // Drawn past the last LOD, or ScatterMeshes::k_noMesh
     uint32_t m_impostorMesh{ScatterMeshes::k_noMesh};
@@ -127,8 +130,11 @@ struct ScatterSet {
     ScatterMeshes m_meshes;
 
     // A texture's place here is its unit in the draws. The set is one draw, so
-    // all its kinds share 32 units.
-    std::vector<std::weak_ptr<Texture2D>> m_textureUnits;
+    // all its kinds share 32 units. The set made every one and removes them.
+    std::vector<std::weak_ptr<Texture>> m_textureUnits;
+    // Per kind: colour, normal, material and mask arrays, a layer per material;
+    // empty where no material has one
+    std::vector<std::array<std::weak_ptr<Texture2DArray>, 4>> m_kindTextures;
 
     // Asked again on every shader reload
     std::function<std::string()> m_readSnippet;
@@ -179,7 +185,8 @@ struct ScatterSet {
  *
  * Items are made on the GPU when a patch is added. Each frame, update culls and
  * picks each item's mesh; renderGeometry draws each set with two multi-draws, one
- * for the LOD meshes and one for the impostors.
+ * for the LOD meshes and one for the impostors, in two passes: depth first, then
+ * shading only the nearest surface.
  */
 class ScatterHandler {
 public:
@@ -230,15 +237,22 @@ private:
     std::vector<std::shared_ptr<ScatterSet>> m_sets;
 
     std::unique_ptr<ShaderProgram> m_cullProgram;
+    // Items are drawn twice: the depth programs cut out alpha and write depth
+    // only, then the shading programs shade what matches that depth
+    std::unique_ptr<ShaderProgram> m_gbufferDepthProgram;
     std::unique_ptr<ShaderProgram> m_gbufferProgram;
+    std::unique_ptr<ShaderProgram> m_impostorDepthProgram;
     std::unique_ptr<ShaderProgram> m_impostorProgram;
     std::unique_ptr<ImpostorBaker> m_impostorBaker;
 
-    // Bakes from each kind's LOD 0 and adds the atlases to the set's units.
+    // Bakes from each kind's last LOD and adds the atlases to the set's units.
     void bakeImpostors(ScatterSet& set);
 
     void buildFrameLists(ScatterSet& set, const FrameRenderParams& params) const;
-    void cull(const ScatterSet& set) const;
+    void cull(const ScatterSet& set, const FrameRenderParams& params) const;
+    // The set's LOD meshes with meshProgram, then its impostors with impostorProgram
+    void drawSet(const ScatterSet& set, ShaderProgram& meshProgram,
+                 ShaderProgram& impostorProgram) const;
     void bindTextures(const ScatterSet& set, const ShaderProgram& program) const;
 
     // Throws std::invalid_argument describing the first problem found.

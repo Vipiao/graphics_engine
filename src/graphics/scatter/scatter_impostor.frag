@@ -4,6 +4,13 @@
 // An impostor texel into the G-buffer: the four views blended, cut at half
 // coverage. Reads are capped at vert_maxLod and kept half a texel inside their
 // cell, so filtering never reaches a neighbouring view.
+//
+// A depth pre-pass: DEPTH_ONLY cuts and writes depth alone, then the shading
+// pass shades what passed.
+
+#ifndef DEPTH_ONLY
+layout(early_fragment_tests) in;
+#endif
 
 layout(location = 0) out vec4 gAlbedo;    // RGB: albedo, A: metallic
 layout(location = 1) out vec4 gNormal;    // RGB: view normal, A: roughness
@@ -26,19 +33,30 @@ void main() {
     // The coarser of the two levels a trilinear read blends
     const float halfTexel = 0.5 * exp2(ceil(lod)) / vert_atlasSide;
 
+    // The colour alone decides the cut, so cut pixels never read the normals
     vec4 colour = vec4(0.0);
+    vec2 uvs[4];
+    for (int nearest = 0; nearest < 4; ++nearest) {
+        const float weight = vert_weights[nearest];
+        if (weight <= 0.0) continue;
+
+        uvs[nearest] = clamp(vert_atlasUV[nearest], vert_cellRect[nearest].xy + halfTexel,
+                             vert_cellRect[nearest].zw - halfTexel);
+        colour += weight * textureLod(u_textures[vert_atlasUnits.x], uvs[nearest], lod);
+    }
+    if (colour.a < 0.5) discard;
+#ifdef DEPTH_ONLY
+    return;
+#endif
+
     // RGB: normal in the mesh's frame. A: roughness.
     vec4 normalRoughness = vec4(0.0);
     for (int nearest = 0; nearest < 4; ++nearest) {
         const float weight = vert_weights[nearest];
         if (weight <= 0.0) continue;
-
-        const vec2 uv = clamp(vert_atlasUV[nearest], vert_cellRect[nearest].xy + halfTexel,
-                              vert_cellRect[nearest].zw - halfTexel);
-        colour += weight * textureLod(u_textures[vert_atlasUnits.x], uv, lod);
-        normalRoughness += weight * textureLod(u_textures[vert_atlasUnits.y], uv, lod);
+        normalRoughness +=
+            weight * textureLod(u_textures[vert_atlasUnits.y], uvs[nearest], lod);
     }
-    if (colour.a < 0.5) discard;
 
     const vec3 normal = normalize(vert_meshToView * (normalRoughness.rgb * 2.0 - 1.0));
 

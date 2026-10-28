@@ -12,6 +12,9 @@ layout(std430, binding = SCATTER_IMPOSTOR_BINDING) readonly buffer ScatterImpost
     ScatterImpostorData impostors[];
 };
 
+// The depth pre-pass and the shading pass must place it alike
+invariant gl_Position;
+
 // In [-1, 1]^2
 layout (location = 0) in vec3 position;
 

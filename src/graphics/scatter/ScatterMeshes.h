@@ -20,7 +20,8 @@ struct ScatterMeshRange {
  * multi-draw draws them all.
  *
  * Numbered kind by kind, LODs nearest first (meshIndex), then one quad per kind
- * with an impostor (impostorMesh). Vertices are GeometryVertex at locations 0 to 3.
+ * with an impostor (impostorMesh). Vertices are GeometryVertex at locations 0 to 3,
+ * and their material's texture layer, a float, at 4.
  */
 class ScatterMeshes {
 public:
@@ -64,5 +65,6 @@ private:
 
     GLuint m_VAO{0};
     GLuint m_vertexBuffer{0};
+    GLuint m_layerBuffer{0};
     GLuint m_indexBuffer{0};
 };

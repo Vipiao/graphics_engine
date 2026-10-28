@@ -16,6 +16,7 @@ struct AssetMeshData {
     std::vector<std::vector<double>> tangentsData;   // Each tangent is 3 doubles (x,y,z)
     std::vector<std::vector<double>> uvsData;        // Each UV is 2 doubles (u,v)
     std::vector<int> indices;
+    std::string materialName;
 };
 
 class AssimpLoader {

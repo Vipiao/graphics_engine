@@ -19,11 +19,21 @@ struct SurfaceMaterial {
 // phong_lighting.glsl normalizes around, expressed as a roughness.
 const float k_defaultRoughness = 0.35;
 
+// With MATERIAL_TEXTURE_ARRAYS defined, the textures are arrays and uv carries
+// the layer in z.
+#ifdef MATERIAL_TEXTURE_ARRAYS
+#define MaterialSampler sampler2DArray
+#define MaterialUV vec3
+#else
+#define MaterialSampler sampler2D
+#define MaterialUV vec2
+#endif
+
 // Callers should discard fragments whose alpha is below 1/255. The texture
 // unit parameters index textures; -1 means the texture is not present.
 SurfaceMaterial decodeSurfaceMaterial(
-   sampler2D textures[MAX_TEXTURE_UNITS],
-   vec3 vertexNormal, mat3 TBN, vec2 uv, vec4 color,
+   MaterialSampler textures[MAX_TEXTURE_UNITS],
+   vec3 vertexNormal, mat3 TBN, MaterialUV uv, vec4 color,
    int colorTextureUnit, int normalTextureUnit, int materialTextureUnit,
    int maskTextureUnit, float emissiveScalar
 ) {

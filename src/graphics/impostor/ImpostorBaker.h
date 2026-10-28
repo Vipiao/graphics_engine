@@ -12,9 +12,11 @@
 
 class ShaderProgram;
 class Texture2D;
+class Texture2DArray;
 class TextureStore;
 
-// A mesh already uploaded: GeometryVertex at locations 0 to 3, indices in the VAO.
+// A mesh already uploaded: GeometryVertex at locations 0 to 3, the texture layer
+// (a float) at 4, indices in the VAO.
 struct ImpostorMesh {
     GLuint m_vao{0};
     uint32_t m_firstIndex{0};
@@ -28,8 +30,10 @@ struct ImpostorMesh {
 // As material_decode.glsl reads it.
 struct ImpostorMaterial {
     glm::vec4 m_color{1.0f};
-    // Colour, normal, material, mask; empty for none
-    std::array<std::weak_ptr<Texture2D>, 4> m_textures;
+    // Colour, normal, material, mask, indexed by the vertex's layer; empty for none
+    std::array<std::weak_ptr<Texture2DArray>, 4> m_textures;
+    // Fragments with alpha below it are cut out
+    float m_alphaCutoff{0.5f};
 };
 
 // The textures are the store's; whoever asked for the bake removes them.

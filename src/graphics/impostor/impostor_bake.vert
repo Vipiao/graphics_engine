@@ -10,6 +10,7 @@ layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normal;
 layout (location = 2) in vec3 tangent;
 layout (location = 3) in vec2 uv;
+layout (location = 4) in float layer;
 
 uniform ivec2 u_cell;
 uniform int u_viewsPerSide;
@@ -19,7 +20,8 @@ uniform float u_radius;
 // In the mesh's frame, as the atlas holds them
 out vec3 vert_normal;
 out mat3 vert_TBN;
-out vec2 vert_uv;
+// z: the texture layer
+out vec3 vert_uv;
 
 void main() {
     vec3 direction = impostorCellDirection(u_cell, u_viewsPerSide);
@@ -33,5 +35,5 @@ void main() {
 
     vert_normal = normal;
     vert_TBN = mat3(tangent, cross(normal, tangent), normal);
-    vert_uv = uv;
+    vert_uv = vec3(uv, layer);
 }

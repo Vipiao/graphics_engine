@@ -1,5 +1,7 @@
 #include "AssimpLoader.h"
 
+#include <assimp/config.h>
+#include <cassert>
 #include <stdexcept>
 #include <iostream>
 
@@ -96,14 +98,14 @@ AssetMeshData AssimpLoader::processMesh(
 
     // Process indices
     for (unsigned int i = 0; i < mesh->mNumFaces; i++) {
-        aiFace face = mesh->mFaces[i];
+        const aiFace& face = mesh->mFaces[i];
+        assert(face.mNumIndices == 3 && "points and lines are dropped at import");
         for (unsigned int j = 0; j < face.mNumIndices; j++) {
             meshData.indices.push_back(face.mIndices[j]);
         }
     }
 
-    // Process materials if needed (currently not implemented)
-    // if (mesh->mMaterialIndex >= 0) { ... }
+    meshData.materialName = scene->mMaterials[mesh->mMaterialIndex]->GetName().C_Str();
 
     return meshData;
 }
@@ -137,9 +139,13 @@ void AssimpLoader::load(
     // Create Assimp importer
     Assimp::Importer importer;
 
+    // Triangles only: readers take indices three at a time
+    importer.SetPropertyInteger(AI_CONFIG_PP_SBP_REMOVE,
+                                aiPrimitiveType_POINT | aiPrimitiveType_LINE);
+
     // Set up post-processing flags
-    unsigned int flags = aiProcess_Triangulate | aiProcess_FlipUVs;
-    
+    unsigned int flags = aiProcess_Triangulate | aiProcess_SortByPType | aiProcess_FlipUVs;
+
     // Add additional processing flags
     flags |= aiProcess_CalcTangentSpace;          // Calculate tangents and bitangents
     //flags |= aiProcess_GenSmoothNormals;          // Generate smooth normals if not present

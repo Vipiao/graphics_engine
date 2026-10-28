@@ -1,10 +1,10 @@
 // scatter_cull.comp
 #version 460 core
 
-// Picks each item's mesh by distance: the first LOD it is within, else the
-// kind's impostor up to its distance, else nothing. A drawn item is appended to
-// its mesh's part of the visible list and counted in that mesh's draw command.
-// One workgroup per patch.
+// Drops items out of view and picks each other item's mesh by distance: the first
+// LOD it is within, else the kind's impostor up to its distance, else nothing. A
+// drawn item is appended to its mesh's part of the visible list and counted in
+// that mesh's draw command. One workgroup per patch.
 
 #include "scatter_data.glsl"
 
@@ -38,6 +38,23 @@ layout(std430, binding = SCATTER_VISIBLE_BINDING) writeonly buffer ScatterVisibl
 uniform uint u_itemsPerPatch;
 uniform uint u_kindCount;
 
+uniform mat4 view;
+uniform mat4 projection;
+
+// False when the sphere, camera relative in the world, lies wholly outside one of
+// the view's side planes. They meet at the camera, so this drops what is behind.
+bool inView(vec3 centre, float radius) {
+    const mat4 toClip = projection * view;
+    const vec4 clip = toClip * vec4(centre, 1.0);
+    const vec4 rowX = vec4(toClip[0][0], toClip[1][0], toClip[2][0], toClip[3][0]);
+    const vec4 rowY = vec4(toClip[0][1], toClip[1][1], toClip[2][1], toClip[3][1]);
+    const vec4 rowW = vec4(toClip[0][3], toClip[1][3], toClip[2][3], toClip[3][3]);
+    return clip.w + clip.x >= -radius * length((rowW + rowX).xyz) &&
+           clip.w - clip.x >= -radius * length((rowW - rowX).xyz) &&
+           clip.w + clip.y >= -radius * length((rowW + rowY).xyz) &&
+           clip.w - clip.y >= -radius * length((rowW - rowY).xyz);
+}
+
 void main() {
     const uint patchIndex = gl_WorkGroupID.x;
     const ScatterPatchData patchData = patches[patchIndex];
@@ -52,8 +69,13 @@ void main() {
         const ScatterKindData kind = kinds[item.kind];
 
         // In real metres, like the LOD distances
-        const float distance =
-            length((patchData.cameraOffset + item.positionScale.xyz) * bodyScale);
+        const vec3 fromCamera = (patchData.cameraOffset + item.positionScale.xyz) * bodyScale;
+        const float distance = length(fromCamera);
+        const float largestScale = max(bodyScale.x, max(bodyScale.y, bodyScale.z));
+        if (!inView(instances[patchData.instance].bodyRotation * fromCamera,
+                    kind.boundingRadius * item.positionScale.w * largestScale)) {
+            continue;
+        }
 
         uint lod = 0u;
         while (lod < kind.lodCount && distance > lodDistances[kind.firstMesh + lod]) {

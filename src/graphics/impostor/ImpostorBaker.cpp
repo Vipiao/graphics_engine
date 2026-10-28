@@ -8,6 +8,7 @@
 #include <vector>
 #include "../ShaderProgram.h"
 #include "../Texture2D.h"
+#include "../Texture2DArray.h"
 #include "../TextureStore.h"
 #include "utils/PngWriter.h"
 
@@ -195,6 +196,7 @@ ImpostorBaker::ImpostorBaker(TextureStore* textureStore) : m_textureStore{textur
         throw std::runtime_error("ImpostorBaker: TextureStore cannot be null");
     }
     m_program = std::make_unique<ShaderProgram>();
+    m_program->addDefine("MATERIAL_TEXTURE_ARRAYS", "");
     m_program->loadVertexShaderFromPath(s_vertexPath);
     m_program->loadFragmentShaderFromPath(s_fragmentPath);
     m_program->linkShaders();
@@ -217,6 +219,9 @@ ImpostorAtlas ImpostorBaker::bake(const ImpostorMesh& mesh, const ImpostorMateri
     if (mesh.m_vao == 0 || mesh.m_indexCount == 0) {
         throw std::invalid_argument("ImpostorBaker::bake: the mesh has nothing to draw");
     }
+
+    assert(material.m_alphaCutoff > 0.0f && material.m_alphaCutoff <= 1.0f &&
+           "a cutoff of 0 keeps see-through texels, above 1 cuts everything");
 
     const int side{spec.m_viewsPerSide * spec.m_viewPixels};
     const SavedState saved{SavedState::capture()};
@@ -265,12 +270,13 @@ ImpostorAtlas ImpostorBaker::bake(const ImpostorMesh& mesh, const ImpostorMateri
     m_program->setUniformVec3("u_centre", glm::dvec3{mesh.m_centre});
     m_program->setUniformFloat("u_radius", mesh.m_radius);
     m_program->setUniformVec4("u_color", glm::dvec4{material.m_color});
+    m_program->setUniformFloat("u_alphaCutoff", material.m_alphaCutoff);
 
     // Other passes bind textures directly
     m_textureStore->invalidateBindings();
     glm::ivec4 units{-1};
     for (int unit{0}; unit < k_materialTextures; ++unit) {
-        const std::shared_ptr<Texture2D> texture{material.m_textures[unit].lock()};
+        const std::shared_ptr<Texture2DArray> texture{material.m_textures[unit].lock()};
         if (!texture) continue;
         m_textureStore->bindTexture(unit, *texture);
         const GLint location{m_program->getTextureUnitLocation(unit)};

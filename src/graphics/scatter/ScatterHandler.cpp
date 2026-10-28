@@ -44,6 +44,9 @@ constexpr GLuint s_visibleBinding{9};
 constexpr GLuint s_impostorBinding{10};
 constexpr uint32_t s_generateGroupSize{64};
 
+// Foliage is cut out where its alpha falls below this, in the bake as in the draw
+constexpr float s_alphaCutoff{0.5f};
+
 void addScatterDefines(ShaderProgram& program) {
     const std::pair<const char*, uint32_t> defines[]{
         {"SCATTER_ITEM_BINDING", s_itemBinding},
@@ -91,23 +94,43 @@ void uploadDynamicList(GLuint buffer, const std::vector<T>& list) {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
-// The texture's unit among units, added if new; -1 for an empty path.
-int textureUnit(std::vector<std::weak_ptr<Texture2D>>& units, TextureStore& textureStore,
-                const std::string& path) {
-    if (path.empty()) return -1;
-
-    const std::shared_ptr<Texture2D> texture{textureStore.createFromFile(path).lock()};
-    for (size_t unit{0}; unit < units.size(); ++unit) {
-        if (units[unit].lock() == texture) return static_cast<int>(unit);
-    }
-
+// The texture's new unit among units
+int addTextureUnit(std::vector<std::weak_ptr<Texture>>& units, std::weak_ptr<Texture> texture) {
     if (units.size() >= static_cast<size_t>(ShaderProgram::s_maxTextureUnits)) {
-        throw std::runtime_error("ScatterHandler::createSet: the kinds of a set can use at most " +
+        throw std::runtime_error("ScatterHandler::createSet: the kinds of a set and their "
+                                 "impostors can use at most " +
                                  std::to_string(ShaderProgram::s_maxTextureUnits) +
                                  " textures");
     }
-    units.push_back(texture);
+    units.push_back(std::move(texture));
     return static_cast<int>(units.size() - 1);
+}
+
+// A material without a texture of a role gets a layer that decodes as none would:
+// white colour and mask, a flat normal, material_decode.glsl's k_defaultRoughness
+constexpr std::array<std::array<uint8_t, 4>, 4> s_roleFills{{{255, 255, 255, 255},
+                                                             {128, 128, 255, 255},
+                                                             {0, 89, 0, 255},
+                                                             {255, 255, 255, 255}}};
+
+std::array<std::weak_ptr<Texture2DArray>, 4> createKindTextures(const ScatterKind& kind,
+                                                                TextureStore& textureStore) {
+    std::array<std::weak_ptr<Texture2DArray>, 4> textures;
+    for (size_t role{0}; role < textures.size(); ++role) {
+        std::vector<std::string> paths;
+        for (const ScatterMaterial& material : kind.m_materials) {
+            const std::string rolePaths[4]{material.m_colorTexturePath,
+                                           material.m_normalTexturePath,
+                                           material.m_materialTexturePath,
+                                           material.m_maskTexturePath};
+            paths.push_back(rolePaths[role]);
+        }
+        if (std::any_of(paths.begin(), paths.end(),
+                        [](const std::string& path) { return !path.empty(); })) {
+            textures[role] = textureStore.createArrayFromFiles(paths, s_roleFills[role]);
+        }
+    }
+    return textures;
 }
 }
 
@@ -127,15 +150,27 @@ ScatterSet::ScatterSet(const ScatterSetConfig& config, TextureStore& textureStor
     for (uint32_t kind{0}; kind < config.m_kinds.size(); ++kind) {
         const ScatterKind& kindConfig{config.m_kinds[kind]};
         const std::vector<ScatterLod>& lods{kindConfig.m_lods};
-        const glm::ivec4 textureUnits{
-            textureUnit(m_textureUnits, textureStore, kindConfig.m_colorTexturePath),
-            textureUnit(m_textureUnits, textureStore, kindConfig.m_normalTexturePath),
-            textureUnit(m_textureUnits, textureStore, kindConfig.m_materialTexturePath),
-            textureUnit(m_textureUnits, textureStore, kindConfig.m_maskTexturePath)};
+        m_kindTextures.push_back(createKindTextures(kindConfig, textureStore));
+        glm::ivec4 textureUnits{-1};
+        for (int role{0}; role < 4; ++role) {
+            if (!m_kindTextures.back()[role].expired()) {
+                textureUnits[role] = addTextureUnit(m_textureUnits, m_kindTextures.back()[role]);
+            }
+        }
+        // Holds the impostor too: its quad frames the last LOD's sphere and moves
+        // towards the fade offset
+        float boundingRadius{m_meshes.getBoundingRadius(kind)};
+        if (kindConfig.m_impostor) {
+            const uint32_t lastLod{
+                m_meshes.meshIndex(kind, static_cast<uint32_t>(lods.size()) - 1)};
+            boundingRadius = std::max(
+                {boundingRadius,
+                 glm::length(m_meshes.getCentre(lastLod)) + m_meshes.getRadius(lastLod),
+                 static_cast<float>(glm::length(kindConfig.m_impostor->m_fadeOffsetMetres))});
+        }
         kindTable.push_back(ScatterKindData{glm::vec4{kindConfig.m_color}, textureUnits,
                                             m_meshes.meshIndex(kind, 0),
-                                            static_cast<uint32_t>(lods.size()),
-                                            m_meshes.getBoundingRadius(kind),
+                                            static_cast<uint32_t>(lods.size()), boundingRadius,
                                             m_meshes.impostorMesh(kind)});
         for (const ScatterLod& lod : lods) {
             lodDistances.push_back(static_cast<float>(lod.m_maxDistance));
@@ -199,17 +234,30 @@ ScatterHandler::ScatterHandler(SSBOManager* ssboManager, TextureStore* textureSt
     m_cullProgram->loadComputeShaderFromPath(s_cullPath);
     m_cullProgram->linkShaders();
 
-    m_gbufferProgram = std::make_unique<ShaderProgram>();
-    addScatterDefines(*m_gbufferProgram);
-    m_gbufferProgram->loadVertexShaderFromPath(s_vertexPath);
-    m_gbufferProgram->loadFragmentShaderFromPath(s_gbufferFragmentPath);
-    m_gbufferProgram->linkShaders();
-
-    m_impostorProgram = std::make_unique<ShaderProgram>();
-    addScatterDefines(*m_impostorProgram);
-    m_impostorProgram->loadVertexShaderFromPath(s_impostorVertexPath);
-    m_impostorProgram->loadFragmentShaderFromPath(s_impostorFragmentPath);
-    m_impostorProgram->linkShaders();
+    // Kind textures are arrays, a layer per material
+    const auto buildMeshProgram{[](const char* passDefine) {
+        auto program{std::make_unique<ShaderProgram>()};
+        addScatterDefines(*program);
+        program->addDefine(passDefine, "");
+        program->addDefine("MATERIAL_TEXTURE_ARRAYS", "");
+        program->loadVertexShaderFromPath(s_vertexPath);
+        program->loadFragmentShaderFromPath(s_gbufferFragmentPath);
+        program->linkShaders();
+        return program;
+    }};
+    const auto buildImpostorProgram{[](bool depthOnly) {
+        auto program{std::make_unique<ShaderProgram>()};
+        addScatterDefines(*program);
+        if (depthOnly) program->addDefine("DEPTH_ONLY", "");
+        program->loadVertexShaderFromPath(s_impostorVertexPath);
+        program->loadFragmentShaderFromPath(s_impostorFragmentPath);
+        program->linkShaders();
+        return program;
+    }};
+    m_gbufferDepthProgram = buildMeshProgram("DEPTH_ONLY");
+    m_gbufferProgram = buildMeshProgram("EARLY_FRAGMENT_TESTS");
+    m_impostorDepthProgram = buildImpostorProgram(true);
+    m_impostorProgram = buildImpostorProgram(false);
 }
 
 // Here, where ShaderProgram is a complete type, so the unique_ptrs can delete it.
@@ -239,22 +287,17 @@ void ScatterHandler::bakeImpostors(ScatterSet& set) {
         const ScatterKind& kindConfig{kinds[kind]};
         if (!kindConfig.m_impostor) continue;
 
-        const uint32_t meshIndex{set.m_meshes.meshIndex(kind, 0)};
+        // The last LOD, the one the impostor takes over from
+        assert(!kindConfig.m_lods.empty() && "validateConfig requires a LOD");
+        const uint32_t lastLod{static_cast<uint32_t>(kindConfig.m_lods.size()) - 1};
+        const uint32_t meshIndex{set.m_meshes.meshIndex(kind, lastLod)};
         const ScatterMeshRange& range{set.m_meshes.getRange(meshIndex)};
         const ImpostorMesh mesh{set.m_meshes.getVAO(), range.m_firstIndex, range.m_indexCount,
                                 range.m_baseVertex, set.m_meshes.getCentre(meshIndex),
                                 set.m_meshes.getRadius(meshIndex)};
 
-        ImpostorMaterial material{};
-        material.m_color = glm::vec4{kindConfig.m_color};
-        const std::string paths[4]{kindConfig.m_colorTexturePath, kindConfig.m_normalTexturePath,
-                                   kindConfig.m_materialTexturePath,
-                                   kindConfig.m_maskTexturePath};
-        for (int role{0}; role < 4; ++role) {
-            if (!paths[role].empty()) {
-                material.m_textures[role] = m_textureStore->createFromFile(paths[role]);
-            }
-        }
+        const ImpostorMaterial material{glm::vec4{kindConfig.m_color}, set.m_kindTextures[kind],
+                                        s_alphaCutoff};
 
         set.m_impostors[kind] =
             m_impostorBaker->bake(mesh, material, kindConfig.m_impostor->m_bake);
@@ -266,20 +309,13 @@ void ScatterHandler::bakeImpostors(ScatterSet& set) {
         if (!set.m_impostors[kind]) continue;
         const ImpostorAtlas& atlas{*set.m_impostors[kind]};
 
-        const int colorUnit{static_cast<int>(set.m_textureUnits.size())};
-        if (colorUnit + 2 > ShaderProgram::s_maxTextureUnits) {
-            throw std::runtime_error("ScatterHandler::createSet: the kinds of a set and their "
-                                     "impostors can use at most " +
-                                     std::to_string(ShaderProgram::s_maxTextureUnits) +
-                                     " textures");
-        }
-        set.m_textureUnits.push_back(atlas.m_color);
-        set.m_textureUnits.push_back(atlas.m_normal);
+        const int colorUnit{addTextureUnit(set.m_textureUnits, atlas.m_color)};
+        const int normalUnit{addTextureUnit(set.m_textureUnits, atlas.m_normal)};
 
         const ScatterImpostor& config{*kinds[kind].m_impostor};
         impostorTable[kind] = ScatterImpostorData{
             glm::vec4{atlas.m_centre, atlas.m_radius},
-            glm::ivec4{colorUnit, colorUnit + 1, atlas.m_spec.m_viewsPerSide,
+            glm::ivec4{colorUnit, normalUnit, atlas.m_spec.m_viewsPerSide,
                        atlas.m_spec.m_viewPixels},
             glm::ivec4{atlas.m_spec.m_borderPixels, 0, 0, 0},
             glm::vec4{config.m_maxDistance - config.m_fadeBandMetres, config.m_fadeBandMetres,
@@ -309,10 +345,8 @@ void ScatterHandler::removeSet(std::weak_ptr<ScatterSet> setWeak) {
     const std::shared_ptr<ScatterSet> set{setWeak.lock()};
     if (!set) return;
 
-    for (const std::optional<ImpostorAtlas>& impostor : set->m_impostors) {
-        if (!impostor) continue;
-        m_textureStore->remove(impostor->m_color);
-        m_textureStore->remove(impostor->m_normal);
+    for (const std::weak_ptr<Texture>& texture : set->m_textureUnits) {
+        m_textureStore->remove(texture);
     }
 
     // Takes its instances and patches with it
@@ -423,14 +457,15 @@ void ScatterHandler::update(const FrameRenderParams& params) {
 
     for (const std::shared_ptr<ScatterSet>& set : m_sets) {
         buildFrameLists(*set, params);
-        cull(*set);
+        cull(*set, params);
     }
 }
 
-void ScatterHandler::cull(const ScatterSet& set) const {
+void ScatterHandler::cull(const ScatterSet& set, const FrameRenderParams& params) const {
     if (set.m_patchList.empty()) return;
 
     m_cullProgram->use();
+    setInstanceFrameUniforms(m_cullProgram->getID(), params);
     m_cullProgram->setUniformUInt32("u_itemsPerPatch", set.m_config.m_itemsPerPatch);
     m_cullProgram->setUniformUInt32("u_kindCount",
                                     static_cast<uint32_t>(set.m_config.m_kinds.size()));
@@ -450,12 +485,20 @@ void ScatterHandler::cull(const ScatterSet& set) const {
 }
 
 void ScatterHandler::renderGeometry(const FrameRenderParams& params) {
-    m_impostorProgram->use();
-    setInstanceFrameUniforms(m_impostorProgram->getID(), params);
-    m_gbufferProgram->use();
-    setInstanceFrameUniforms(m_gbufferProgram->getID(), params);
+    for (ShaderProgram* program : {m_gbufferDepthProgram.get(), m_gbufferProgram.get(),
+                                   m_impostorDepthProgram.get(), m_impostorProgram.get()}) {
+        program->use();
+        setInstanceFrameUniforms(program->getID(), params);
+        // Every frame, as a shader reload resets it
+        program->setUniformFloat("u_alphaCutoff", s_alphaCutoff);
+    }
     // Earlier passes bind these units directly
     m_textureStore->invalidateBindings();
+    GLint depthFunc{GL_GEQUAL};
+    glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
+    GLboolean depthMask{GL_FALSE};
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+    assert(depthMask && glIsEnabled(GL_DEPTH_TEST) && "the G-buffer pass tests and writes depth");
 
     for (const std::shared_ptr<ScatterSet>& set : m_sets) {
         if (set->m_patchList.empty()) continue;
@@ -469,30 +512,48 @@ void ScatterHandler::renderGeometry(const FrameRenderParams& params) {
         glBindVertexArray(set->m_meshes.getVAO());
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, set->m_commandBuffer);
 
-        const GLsizei lodMeshes{static_cast<GLsizei>(set->m_meshes.getLodMeshCount())};
-        m_gbufferProgram->use();
-        bindTextures(*set, *m_gbufferProgram);
-        glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, nullptr, lodMeshes, 0);
-
-        const GLsizei impostors{static_cast<GLsizei>(set->m_drawCommands.size()) - lodMeshes};
-        assert(impostors >= 0 && "the LOD meshes are a prefix of the commands");
-        if (impostors > 0) {
-            m_impostorProgram->use();
-            bindTextures(*set, *m_impostorProgram);
-            glMultiDrawElementsIndirect(
-                GL_TRIANGLES, GL_UNSIGNED_INT,
-                reinterpret_cast<void*>(static_cast<uintptr_t>(lodMeshes) *
-                                        sizeof(ScatterDrawCommand)),
-                impostors, 0);
-        }
+        // Depth first, then shade only what matches it: a pixel is shaded once
+        // however many items overlap there
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        drawSet(*set, *m_gbufferDepthProgram, *m_impostorDepthProgram);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDepthFunc(GL_EQUAL);
+        glDepthMask(GL_FALSE);
+        drawSet(*set, *m_gbufferProgram, *m_impostorProgram);
+        glDepthFunc(static_cast<GLenum>(depthFunc));
+        glDepthMask(GL_TRUE);
     }
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     glBindVertexArray(0);
 }
 
+void ScatterHandler::drawSet(const ScatterSet& set, ShaderProgram& meshProgram,
+                             ShaderProgram& impostorProgram) const {
+    const GLsizei lodMeshes{static_cast<GLsizei>(set.m_meshes.getLodMeshCount())};
+    meshProgram.use();
+    bindTextures(set, meshProgram);
+    // Both sides of a card, with the same normal
+    const GLboolean culling{glIsEnabled(GL_CULL_FACE)};
+    glDisable(GL_CULL_FACE);
+    glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, nullptr, lodMeshes, 0);
+    if (culling) glEnable(GL_CULL_FACE);
+
+    const GLsizei impostors{static_cast<GLsizei>(set.m_drawCommands.size()) - lodMeshes};
+    assert(impostors >= 0 && "the LOD meshes are a prefix of the commands");
+    if (impostors > 0) {
+        impostorProgram.use();
+        bindTextures(set, impostorProgram);
+        glMultiDrawElementsIndirect(
+            GL_TRIANGLES, GL_UNSIGNED_INT,
+            reinterpret_cast<void*>(static_cast<uintptr_t>(lodMeshes) *
+                                    sizeof(ScatterDrawCommand)),
+            impostors, 0);
+    }
+}
+
 void ScatterHandler::bindTextures(const ScatterSet& set, const ShaderProgram& program) const {
     for (size_t unit{0}; unit < set.m_textureUnits.size(); ++unit) {
-        const std::shared_ptr<Texture2D> texture{set.m_textureUnits[unit].lock()};
+        const std::shared_ptr<Texture> texture{set.m_textureUnits[unit].lock()};
         if (!texture) continue;
 
         m_textureStore->bindTexture(static_cast<int>(unit), *texture);
@@ -536,7 +597,8 @@ std::pair<bool, std::string> ScatterHandler::reloadShaders() {
     bool allSuccess{true};
 
     for (ShaderProgram* program :
-         {m_cullProgram.get(), m_gbufferProgram.get(), m_impostorProgram.get()}) {
+         {m_cullProgram.get(), m_gbufferDepthProgram.get(), m_gbufferProgram.get(),
+          m_impostorDepthProgram.get(), m_impostorProgram.get()}) {
         const auto [success, error] = program->reloadShaders();
         if (!success) {
             allSuccess = false;

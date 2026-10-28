@@ -13,14 +13,19 @@ layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normal;
 layout (location = 2) in vec3 tangent;
 layout (location = 3) in vec2 uv;
+layout (location = 4) in float layer;
 
 uniform mat4 view;
 uniform mat4 projection;
 
+// The depth pre-pass and the shading pass must place it alike
+invariant gl_Position;
+
 out vec3 vert_normal;
 out mat3 vert_TBN;
 out vec3 vert_pos;
-out vec2 vert_uv;
+// z: the texture layer
+out vec3 vert_uv;
 out vec4 vert_color;
 flat out int vert_colorTextureUnit;
 flat out int vert_normalTextureUnit;
@@ -42,7 +47,7 @@ void main() {
     vert_pos = viewPosition.xyz;
     vert_normal = mat3(view) * worldNormal;
     vert_TBN = mat3(view) * mat3(worldTangent, bitangent, worldNormal);
-    vert_uv = uv;
+    vert_uv = vec3(uv, layer);
 
     const ScatterKindData kind = kinds[drawn.item.kind];
     vert_color = kind.color;

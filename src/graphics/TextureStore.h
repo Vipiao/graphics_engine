@@ -2,11 +2,13 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include "Texture2D.h"
+#include "Texture2DArray.h"
 #include "TextureCube.h"
 #include "ShaderProgram.h"
 
@@ -38,6 +40,12 @@ public:
     // returns what was already loaded rather than a second copy of it -- the
     // only reason the store knows paths exist at all.
     std::weak_ptr<Texture2D> createFromFile(const std::string& path);
+
+    // An RGBA8 array with one layer per path, mipmapped. An empty path makes a
+    // layer of fill. Throws if the files differ in size or every path is empty.
+    // Not cached: each call makes its own.
+    std::weak_ptr<Texture2DArray> createArrayFromFiles(const std::vector<std::string>& paths,
+                                                       const std::array<uint8_t, 4>& fill);
 
     void remove(std::weak_ptr<Texture> texture);
 

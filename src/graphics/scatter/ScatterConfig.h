@@ -23,7 +23,8 @@ struct ScatterLod {
     double m_maxDistance{0.0};
 };
 
-// A kind's far stand-in: a baked picture of its LOD 0 (ImpostorBaker).
+// A kind's far stand-in: a baked picture of its last LOD (ImpostorBaker), so
+// the switch from that LOD changes little.
 struct ScatterImpostor {
     // Metres; used from the last LOD's distance up to this
     double m_maxDistance{0.0};
@@ -37,16 +38,25 @@ struct ScatterImpostor {
     ImpostorBakeSpec m_bake;
 };
 
+// The textures of the sub-meshes whose material (an OBJ's usemtl) is m_name; an
+// empty name takes those no other material names. Each role becomes an array with
+// a layer per material, so a kind's textures of one role share a size. Empty paths
+// for none. Material: R emissive mask, G roughness, B metallic. Alpha below 0.5 is
+// cut out; back faces are drawn with the model's normals as they are.
+struct ScatterMaterial {
+    std::string m_name;
+    std::string m_colorTexturePath;
+    std::string m_normalTexturePath;
+    std::string m_materialTexturePath;
+    std::string m_maskTexturePath;
+};
+
 struct ScatterKind {
     // Nearest first. Not drawn past the last one (or the impostor).
     std::vector<ScatterLod> m_lods;
     // Decoded by material_decode.glsl, as for every other mesh
     glm::dvec4 m_color{1.0, 1.0, 1.0, 1.0};
-    // Empty for none. Material: R emissive mask, G roughness, B metallic.
-    std::string m_colorTexturePath;
-    std::string m_normalTexturePath;
-    std::string m_materialTexturePath;
-    std::string m_maskTexturePath;
+    std::vector<ScatterMaterial> m_materials;
     std::optional<ScatterImpostor> m_impostor;
 };
 
