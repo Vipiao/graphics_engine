@@ -5,10 +5,13 @@
 // coverage. Reads are capped at vert_maxLod and kept half a texel inside their
 // cell, so filtering never reaches a neighbouring view.
 //
-// Each texel takes the surface's depth from the depth atlas, so overlapping
+// Each texel takes the surface's depth from the normal atlas's alpha, so overlapping
 // impostors cut into each other along their surfaces rather than along the planes
 // of their quads. The quad lies at the sphere's front and depth is only pushed
 // back, so fragments behind what is drawn are still dropped before shading.
+// Shaded at the default roughness.
+
+#include "../shared_shaders/material_decode.glsl"
 
 // Reverse-Z: further is less
 layout(depth_less) out float gl_FragDepth;
@@ -24,7 +27,7 @@ in vec2 vert_atlasUV[4];
 flat in vec4 vert_cellRect[4];
 flat in vec4 vert_weights;
 flat in mat3 vert_meshToView;
-flat in ivec3 vert_atlasUnits;
+flat in ivec2 vert_atlasUnits;
 flat in float vert_atlasSide;
 flat in float vert_maxLod;
 flat in vec3 vert_crossfade;
@@ -34,7 +37,7 @@ flat in float vert_depthReach;
 #include "../shared_shaders/dither.glsl"
 
 void main() {
-    if (!ditherKeeps(vert_crossfade)) discard;
+    if (!ditherKeeps(gl_FragCoord.xy, vert_crossfade)) discard;
 
     // The views are the same size on screen, so one level serves all four
     const float lod =
@@ -55,25 +58,22 @@ void main() {
     }
     if (colour.a < 0.5) discard;
 
-    // RGB: normal in the mesh's frame. A: roughness.
-    vec4 normalRoughness = vec4(0.0);
-    float surface = 0.0;
+    // RGB: normal in the mesh's frame. A: surface depth.
+    vec4 normalDepth = vec4(0.0);
     for (int nearest = 0; nearest < 4; ++nearest) {
         const float weight = vert_weights[nearest];
         if (weight <= 0.0) continue;
-        normalRoughness +=
-            weight * textureLod(u_textures[vert_atlasUnits.y], uvs[nearest], lod);
-        surface += weight * textureLod(u_textures[vert_atlasUnits.z], uvs[nearest], lod).r;
+        normalDepth += weight * textureLod(u_textures[vert_atlasUnits.y], uvs[nearest], lod);
     }
 
-    const float viewDepth = vert_viewDepth + (2.0 * surface - 1.0) * vert_depthReach;
+    const float viewDepth = vert_viewDepth + (2.0 * normalDepth.a - 1.0) * vert_depthReach;
     const float depth = (projection[2][2] * viewDepth + projection[3][2]) /
                         (projection[2][3] * viewDepth + projection[3][3]);
     gl_FragDepth = min(depth, gl_FragCoord.z);
 
-    const vec3 normal = normalize(vert_meshToView * (normalRoughness.rgb * 2.0 - 1.0));
+    const vec3 normal = normalize(vert_meshToView * (normalDepth.rgb * 2.0 - 1.0));
 
     gAlbedo = vec4(colour.rgb, 0.0);
-    gNormal = vec4(normal * 0.5 + 0.5, normalRoughness.a);
+    gNormal = vec4(normal * 0.5 + 0.5, k_defaultRoughness);
     gMaterial = vec4(0.0, 1.0, 0.0, 1.0);
 }

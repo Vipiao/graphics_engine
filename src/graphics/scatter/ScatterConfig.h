@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -38,6 +39,8 @@ struct ScatterImpostor {
     // How far it has moved at the end of the band, in the mesh's frame, before
     // the item's scale
     glm::dvec3 m_fadeOffsetMetres{0.0};
+    // Past this only the nearest view is read rather than four blended
+    double m_blendViewsMetres{std::numeric_limits<double>::infinity()};
     ImpostorBakeSpec m_bake;
 };
 

@@ -38,12 +38,12 @@ struct ScatterKindData {
 
 struct ScatterImpostorData {
     vec4 centreRadius;
-    // Colour, normal and depth units; w unused
+    // Colour and normal units; zw unused
     ivec4 units;
     // Views per side, pixels per view, border pixels; w unused
     ivec4 atlas;
-    // x: band start metres. y: band width metres.
-    vec4 fadeBand;
+    // Metres. x, y: the far edge band's start and width. z: views blended up to here.
+    vec4 distances;
     // xyz: offset at the band's end, mesh frame
     vec4 fadeOffset;
 };
@@ -55,10 +55,11 @@ float scatterItemDistance(vec3 cameraOffset, vec3 position, vec3 bodyScale) {
 
 // How far an item at the distance is through the band where a mesh dithers into
 // the next: 0 before it, 1 at its end. lodDistance: max distance, crossfade metres.
+// Without a band, a step at the max distance.
 float scatterHandover(vec2 lodDistance, float distance) {
     return lodDistance.y > 0.0
         ? clamp((distance - lodDistance.x) / lodDistance.y + 1.0, 0.0, 1.0)
-        : 0.0;
+        : float(distance > lodDistance.x);
 }
 
 // GL's DrawElementsIndirectCommand.

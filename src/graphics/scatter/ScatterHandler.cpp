@@ -307,7 +307,6 @@ void ScatterHandler::bakeImpostors(ScatterSet& set) {
 
         const int colorUnit{addTextureUnit(set.m_textureUnits, atlas.m_color)};
         const int normalUnit{addTextureUnit(set.m_textureUnits, atlas.m_normal)};
-        const int depthUnit{addTextureUnit(set.m_textureUnits, atlas.m_depth)};
 
         // scatter_impostor.vert moves the quad to the sphere's front, which needs the
         // camera outside the sphere wherever impostors are drawn (at an item scale of 1)
@@ -319,11 +318,11 @@ void ScatterHandler::bakeImpostors(ScatterSet& set) {
         const ScatterImpostor& config{*kinds[kind].m_impostor};
         impostorTable[kind] = ScatterImpostorData{
             glm::vec4{atlas.m_centre, atlas.m_radius},
-            glm::ivec4{colorUnit, normalUnit, depthUnit, 0},
+            glm::ivec4{colorUnit, normalUnit, 0, 0},
             glm::ivec4{atlas.m_spec.m_viewsPerSide, atlas.m_spec.m_viewPixels,
                        atlas.m_spec.m_borderPixels, 0},
             glm::vec4{config.m_maxDistance - config.m_fadeBandMetres, config.m_fadeBandMetres,
-                      0.0, 0.0},
+                      config.m_blendViewsMetres, 0.0},
             glm::vec4{glm::vec3{config.m_fadeOffsetMetres}, 0.0f}};
     }
     glGenBuffers(1, &set.m_impostorBuffer);
@@ -717,6 +716,10 @@ void ScatterHandler::validateConfig(const ScatterSetConfig& config) {
                          impostor->m_fadeBandMetres > impostor->m_maxDistance - previousDistance)) {
             throw std::invalid_argument(prefix + "kind " + std::to_string(kind) +
                                         " has an impostor fade band wider than its range");
+        }
+        if (impostor && impostor->m_blendViewsMetres < 0.0) {
+            throw std::invalid_argument(prefix + "kind " + std::to_string(kind) +
+                                        " has a negative impostor blend distance");
         }
         meshCount += lods.size() + (impostor ? 1 : 0);
     }

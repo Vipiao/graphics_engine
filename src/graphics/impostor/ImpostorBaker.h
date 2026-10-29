@@ -40,18 +40,16 @@ struct ImpostorMaterial {
 struct ImpostorAtlas {
     // RGB: albedo. A: coverage.
     std::weak_ptr<Texture2D> m_color;
-    // RGB: normal in the mesh's frame, packed to [0, 1]. A: roughness.
+    // RGB: normal in the mesh's frame, packed to [0, 1]. A: the surface's depth
+    // towards the viewer from the sphere's centre, -radius to radius packed to [0, 1].
     std::weak_ptr<Texture2D> m_normal;
-    // R: how far the surface lies towards the viewer from the sphere's centre,
-    // from -radius to radius packed to [0, 1]
-    std::weak_ptr<Texture2D> m_depth;
     ImpostorBakeSpec m_spec;
     glm::vec3 m_centre{0.0f};
     float m_radius{0.0f};
 };
 
 /**
- * @brief Bakes a mesh into colour, normal and depth atlases, one cell per view.
+ * @brief Bakes a mesh into colour and normal-with-depth atlases, one cell per view.
  *
  * Renders into its own framebuffer and restores the GL state it changes. On the
  * CPU, see-through texels take the nearest covered texel of their cell, so mips

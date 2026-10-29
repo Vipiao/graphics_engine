@@ -71,12 +71,13 @@ static_assert(sizeof(ScatterKindData) == 48,
 struct ScatterImpostorData {
     // The sphere the views frame, in the mesh's frame: centre, radius
     glm::vec4 m_centreRadius{0.0f};
-    // Colour, normal and depth units; w unused
+    // Colour and normal units; zw unused
     glm::ivec4 m_units{0};
     // Views per side, pixels per view, border pixels; w unused
     glm::ivec4 m_atlas{0};
-    // Far edge band: x start metres, y width metres (0 for none)
-    glm::vec4 m_fadeBand{0.0f};
+    // Metres. x, y: the far edge band's start and width (0 for none). z: views
+    // blended up to here. w unused.
+    glm::vec4 m_distances{0.0f};
     // xyz: ScatterImpostor::m_fadeOffsetMetres
     glm::vec4 m_fadeOffset{0.0f};
 };

@@ -23,9 +23,9 @@ out vec2 vert_atlasUV[4];
 flat out vec4 vert_cellRect[4];
 flat out vec4 vert_weights;
 flat out mat3 vert_meshToView;
-// Colour, normal and depth atlas units
-flat out ivec3 vert_atlasUnits;
-// View z on the plane through the sphere's centre, and how far the depth atlas
+// Colour and normal atlas units
+flat out ivec2 vert_atlasUnits;
+// View z on the plane through the sphere's centre, and how far the baked depth
 // moves it at the sphere's front
 out float vert_viewDepth;
 flat out float vert_depthReach;
@@ -68,8 +68,8 @@ void main() {
 
     // In the far band: shrink about the origin and move by the offset
     const float distance = scatterDistance(drawn);
-    const float intoBand = impostor.fadeBand.y > 0.0
-        ? clamp((distance - impostor.fadeBand.x) / impostor.fadeBand.y, 0.0, 1.0)
+    const float intoBand = impostor.distances.y > 0.0
+        ? clamp((distance - impostor.distances.x) / impostor.distances.y, 0.0, 1.0)
         : 0.0;
     const vec3 meshPoint =
         quadPoint * (1.0 - intoBand) + impostor.fadeOffset.xyz * intoBand;
@@ -108,9 +108,15 @@ void main() {
             (cellMin + border + (onPicture * 0.5 + 0.5) * (viewPixels - 2.0 * border)) / side;
         vert_cellRect[nearest] = vec4(cellMin / side, (cellMin + viewPixels) / side);
     }
+    // Past the blend distance, the nearest view alone
+    if (distance > impostor.distances.z) {
+        const ivec2 nearestOffset = ivec2(greaterThanEqual(toNext, vec2(0.5)));
+        vert_weights = vec4(0.0);
+        vert_weights[nearestOffset.x + 2 * nearestOffset.y] = 1.0;
+    }
 
     vert_meshToView = mat3(view) * drawn.instance.bodyRotation * drawn.rotation;
-    vert_atlasUnits = impostor.units.xyz;
+    vert_atlasUnits = impostor.units.xy;
     vert_atlasSide = side;
     // The coarsest mip whose cells are whole texels and at least four across, so
     // no texel straddles two views

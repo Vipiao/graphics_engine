@@ -34,7 +34,7 @@ layout(early_fragment_tests) in;
 
 void main() {
 #ifdef CROSSFADE
-   if (!ditherKeeps(vert_crossfade)) discard;
+   if (!ditherKeeps(gl_FragCoord.xy, vert_crossfade)) discard;
 #endif
    SurfaceMaterial surface = decodeSurfaceMaterial(
       u_textures, vert_normal, vert_TBN, vert_uv, vert_color,

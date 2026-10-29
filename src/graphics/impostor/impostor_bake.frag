@@ -2,13 +2,13 @@
 #version 460 core
 
 // The surface through material_decode.glsl, as the G-buffer pass sees it.
-// Metallic and emission are left out.
+// Metallic, emission and roughness are left out.
 
 #include "../shared_shaders/material_decode.glsl"
 
 layout(location = 0) out vec4 outColor;   // RGB: albedo, A: coverage
-layout(location = 1) out vec4 outNormal;  // RGB: normal packed to [0, 1], A: roughness
-layout(location = 2) out float outDepth;  // impostor_bake.vert's depth
+// RGB: normal packed to [0, 1]. A: impostor_bake.vert's depth.
+layout(location = 1) out vec4 outNormal;
 
 // Texture arrays (MATERIAL_TEXTURE_ARRAYS)
 uniform MaterialSampler u_textures[MAX_TEXTURE_UNITS];
@@ -30,6 +30,5 @@ void main() {
     if (surface.alpha < u_alphaCutoff) discard;
 
     outColor = vec4(surface.color, 1.0);
-    outNormal = vec4(surface.normal * 0.5 + 0.5, surface.roughness);
-    outDepth = gl_FragCoord.z;
+    outNormal = vec4(surface.normal * 0.5 + 0.5, gl_FragCoord.z);
 }
