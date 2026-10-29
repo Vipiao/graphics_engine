@@ -76,33 +76,36 @@ struct SavedState {
     }
 };
 
-GLuint createColorTarget(int side) {
+GLuint createColorTarget(int side, GLint internalFormat) {
     GLuint texture{0};
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, side, side, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, side, side, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glBindTexture(GL_TEXTURE_2D, 0);
     return texture;
 }
 
-std::vector<uint8_t> readTarget(GLenum attachment, int side) {
-    std::vector<uint8_t> pixels(static_cast<size_t>(side) * side * k_channels);
+// k_channels channels, or one for GL_RED.
+std::vector<uint8_t> readTarget(GLenum attachment, int side, GLenum format = GL_RGBA) {
+    const size_t channels{format == GL_RED ? size_t{1} : size_t{k_channels}};
+    std::vector<uint8_t> pixels(static_cast<size_t>(side) * side * channels);
     GLint previousAlignment{4};
     glGetIntegerv(GL_PACK_ALIGNMENT, &previousAlignment);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadBuffer(attachment);
-    glReadPixels(0, 0, side, side, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    glReadPixels(0, 0, side, side, format, GL_UNSIGNED_BYTE, pixels.data());
     glPixelStorei(GL_PACK_ALIGNMENT, previousAlignment);
     return pixels;
 }
 
 // Breadth-first flood from the covered texels: every see-through texel takes the
-// colour, normal and roughness of the nearest covered one in its cell. Coverage
-// is kept.
-void fillSeeThrough(std::vector<uint8_t>& color, std::vector<uint8_t>& normal, int side,
-                    int cellPixels) {
+// colour, normal, roughness and depth of the nearest covered one in its cell.
+// Coverage is kept.
+void fillSeeThrough(std::vector<uint8_t>& color, std::vector<uint8_t>& normal,
+                    std::vector<uint8_t>& depth, int side, int cellPixels) {
     const size_t texels{static_cast<size_t>(side) * side};
     std::vector<bool> reached(texels, false);
     std::deque<size_t> frontier{};
@@ -139,17 +142,18 @@ void fillSeeThrough(std::vector<uint8_t>& color, std::vector<uint8_t>& normal, i
             for (int channel{0}; channel < k_channels; ++channel) {
                 normal[next * k_channels + channel] = normal[texel * k_channels + channel];
             }
+            depth[next] = depth[texel];
             frontier.push_back(next);
         }
     }
 }
 
 std::weak_ptr<Texture2D> upload(TextureStore& store, const std::vector<uint8_t>& pixels,
-                                int side) {
+                                int side, TextureFormat format = TextureFormat::RGBA8) {
     TextureSpec spec{};
     spec.m_width = side;
     spec.m_height = side;
-    spec.m_format = TextureFormat::RGBA8;
+    spec.m_format = format;
     spec.m_wrap = TextureSpec::Wrap::ClampToEdge;
     spec.m_filter = TextureFilter::Linear;
     spec.m_generateMipmaps = true;
@@ -229,21 +233,26 @@ ImpostorAtlas ImpostorBaker::bake(const ImpostorMesh& mesh, const ImpostorMateri
     GLuint framebuffer{0};
     glGenFramebuffers(1, &framebuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-    const GLuint colorTarget{createColorTarget(side)};
-    const GLuint normalTarget{createColorTarget(side)};
+    const GLuint colorTarget{createColorTarget(side, GL_RGBA8)};
+    const GLuint normalTarget{createColorTarget(side, GL_RGBA8)};
+    const GLuint surfaceDepthTarget{createColorTarget(side, GL_R8)};
     GLuint depthTarget{0};
     glGenRenderbuffers(1, &depthTarget);
     glBindRenderbuffer(GL_RENDERBUFFER, depthTarget);
     glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, side, side);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTarget, 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, normalTarget, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D,
+                           surfaceDepthTarget, 0);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthTarget);
-    const GLenum drawBuffers[2]{GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
-    glDrawBuffers(2, drawBuffers);
+    const GLenum drawBuffers[3]{GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1,
+                                GL_COLOR_ATTACHMENT2};
+    glDrawBuffers(3, drawBuffers);
     const auto release{[&] {
         glDeleteFramebuffers(1, &framebuffer);
         glDeleteTextures(1, &colorTarget);
         glDeleteTextures(1, &normalTarget);
+        glDeleteTextures(1, &surfaceDepthTarget);
         glDeleteRenderbuffers(1, &depthTarget);
         saved.restore();
         m_textureStore->invalidateBindings();
@@ -307,14 +316,16 @@ ImpostorAtlas ImpostorBaker::bake(const ImpostorMesh& mesh, const ImpostorMateri
 
     std::vector<uint8_t> color{readTarget(GL_COLOR_ATTACHMENT0, side)};
     std::vector<uint8_t> normal{readTarget(GL_COLOR_ATTACHMENT1, side)};
+    std::vector<uint8_t> depth{readTarget(GL_COLOR_ATTACHMENT2, side, GL_RED)};
 
     release();
 
-    fillSeeThrough(color, normal, side, spec.m_viewPixels);
+    fillSeeThrough(color, normal, depth, side, spec.m_viewPixels);
 
     ImpostorAtlas atlas{};
     atlas.m_color = upload(*m_textureStore, color, side);
     atlas.m_normal = upload(*m_textureStore, normal, side);
+    atlas.m_depth = upload(*m_textureStore, depth, side, TextureFormat::R8);
     atlas.m_spec = spec;
     atlas.m_centre = mesh.m_centre;
     atlas.m_radius = mesh.m_radius;
@@ -326,13 +337,16 @@ bool ImpostorBaker::writeImages(const ImpostorAtlas& atlas,
                                 const std::string& name) {
     const std::shared_ptr<Texture2D> colorTexture{atlas.m_color.lock()};
     const std::shared_ptr<Texture2D> normalTexture{atlas.m_normal.lock()};
-    if (!colorTexture || !normalTexture) return false;
+    const std::shared_ptr<Texture2D> depthTexture{atlas.m_depth.lock()};
+    if (!colorTexture || !normalTexture || !depthTexture) return false;
 
     int side{0};
     int normalSide{0};
+    int depthSide{0};
     const std::vector<uint8_t> color{readTexture(*colorTexture, side)};
     const std::vector<uint8_t> normal{readTexture(*normalTexture, normalSide)};
-    assert(side == normalSide && "both atlases are baked at one size");
+    const std::vector<uint8_t> depth{readTexture(*depthTexture, depthSide)};
+    assert(side == normalSide && side == depthSide && "the atlases are baked at one size");
 
     bool written{PngWriter::writeRgb16(directory / (name + "_color.png"), side, side,
                                        pngSamples(color, side, 0, 3))};
@@ -340,5 +354,7 @@ bool ImpostorBaker::writeImages(const ImpostorAtlas& atlas,
                                     pngSamples(normal, side, 0, 3)) && written;
     written = PngWriter::writeGrey16(directory / (name + "_coverage.png"), side, side,
                                      pngSamples(color, side, 3, 1)) && written;
+    written = PngWriter::writeGrey16(directory / (name + "_depth.png"), side, side,
+                                     pngSamples(depth, side, 0, 1)) && written;
     return written;
 }

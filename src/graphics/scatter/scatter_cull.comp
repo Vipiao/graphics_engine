@@ -2,9 +2,10 @@
 #version 460 core
 
 // Drops items out of view and picks each other item's mesh by distance: the first
-// LOD it is within, else the kind's impostor up to its distance, else nothing. A
-// drawn item is appended to its mesh's part of the visible list and counted in
-// that mesh's draw command. One workgroup per patch.
+// LOD it is within, else the kind's impostor up to its distance, else nothing. In
+// a LOD's crossfade band the next mesh is drawn too. A drawn item is appended to
+// its mesh's part of the visible list and counted in that mesh's draw command.
+// One workgroup per patch.
 
 #include "scatter_data.glsl"
 
@@ -26,7 +27,7 @@ layout(std430, binding = SCATTER_KIND_BINDING) readonly buffer ScatterKindBuffer
     ScatterKindData kinds[];
 };
 layout(std430, binding = SCATTER_LOD_DISTANCE_BINDING) readonly buffer ScatterLodDistanceBuffer {
-    float lodDistances[];
+    vec2 lodDistances[];
 };
 layout(std430, binding = SCATTER_COMMAND_BINDING) buffer ScatterCommandBuffer {
     ScatterDrawCommand commands[];
@@ -40,6 +41,11 @@ uniform uint u_kindCount;
 
 uniform mat4 view;
 uniform mat4 projection;
+
+void appendVisible(uint mesh, uint itemIndex, uint patchIndex) {
+    const uint place = atomicAdd(commands[mesh].instanceCount, 1u);
+    visible[commands[mesh].baseInstance + place] = uvec2(itemIndex, patchIndex);
+}
 
 // False when the sphere, camera relative in the world, lies wholly outside one of
 // the view's side planes. They meet at the camera, so this drops what is behind.
@@ -70,7 +76,8 @@ void main() {
 
         // In real metres, like the LOD distances
         const vec3 fromCamera = (patchData.cameraOffset + item.positionScale.xyz) * bodyScale;
-        const float distance = length(fromCamera);
+        const float distance =
+            scatterItemDistance(patchData.cameraOffset, item.positionScale.xyz, bodyScale);
         const float largestScale = max(bodyScale.x, max(bodyScale.y, bodyScale.z));
         if (!inView(instances[patchData.instance].bodyRotation * fromCamera,
                     kind.boundingRadius * item.positionScale.w * largestScale)) {
@@ -78,19 +85,21 @@ void main() {
         }
 
         uint lod = 0u;
-        while (lod < kind.lodCount && distance > lodDistances[kind.firstMesh + lod]) {
+        while (lod < kind.lodCount && distance > lodDistances[kind.firstMesh + lod].x) {
             ++lod;
         }
 
-        uint mesh = kind.firstMesh + lod;
-        if (lod == kind.lodCount) {
-            if (kind.impostorMesh == SCATTER_NO_MESH ||
-                distance > lodDistances[kind.impostorMesh]) {
-                continue;
-            }
-            mesh = kind.impostorMesh;
+        if (lod < kind.lodCount) {
+            const uint mesh = kind.firstMesh + lod;
+            appendVisible(mesh, itemIndex, patchIndex);
+            if (scatterHandover(lodDistances[mesh], distance) <= 0.0) continue;
+            ++lod;
         }
-        const uint place = atomicAdd(commands[mesh].instanceCount, 1u);
-        visible[commands[mesh].baseInstance + place] = uvec2(itemIndex, patchIndex);
+        if (lod < kind.lodCount) {
+            appendVisible(kind.firstMesh + lod, itemIndex, patchIndex);
+        } else if (kind.impostorMesh != SCATTER_NO_MESH &&
+                   distance <= lodDistances[kind.impostorMesh].x) {
+            appendVisible(kind.impostorMesh, itemIndex, patchIndex);
+        }
     }
 }

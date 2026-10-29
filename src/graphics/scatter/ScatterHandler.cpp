@@ -146,7 +146,7 @@ ScatterSet::ScatterSet(const ScatterSetConfig& config, TextureStore& textureStor
     glGenBuffers(1, &m_patchListBuffer);
 
     std::vector<ScatterKindData> kindTable;
-    std::vector<float> lodDistances;
+    std::vector<glm::vec2> lodDistances;
     for (uint32_t kind{0}; kind < config.m_kinds.size(); ++kind) {
         const ScatterKind& kindConfig{config.m_kinds[kind]};
         const std::vector<ScatterLod>& lods{kindConfig.m_lods};
@@ -173,13 +173,13 @@ ScatterSet::ScatterSet(const ScatterSetConfig& config, TextureStore& textureStor
                                             static_cast<uint32_t>(lods.size()), boundingRadius,
                                             m_meshes.impostorMesh(kind)});
         for (const ScatterLod& lod : lods) {
-            lodDistances.push_back(static_cast<float>(lod.m_maxDistance));
+            lodDistances.emplace_back(lod.m_maxDistance, lod.m_crossfadeMetres);
         }
     }
     // The impostor quads follow every LOD mesh, in kind order
     for (const ScatterKind& kindConfig : config.m_kinds) {
         if (kindConfig.m_impostor) {
-            lodDistances.push_back(static_cast<float>(kindConfig.m_impostor->m_maxDistance));
+            lodDistances.emplace_back(kindConfig.m_impostor->m_maxDistance, 0.0);
         }
     }
     assert(lodDistances.size() == m_meshes.getMeshCount() && "one distance per mesh");
@@ -240,24 +240,20 @@ ScatterHandler::ScatterHandler(SSBOManager* ssboManager, TextureStore* textureSt
         addScatterDefines(*program);
         program->addDefine(passDefine, "");
         program->addDefine("MATERIAL_TEXTURE_ARRAYS", "");
+        program->addDefine("CROSSFADE", "");
         program->loadVertexShaderFromPath(s_vertexPath);
         program->loadFragmentShaderFromPath(s_gbufferFragmentPath);
         program->linkShaders();
         return program;
     }};
-    const auto buildImpostorProgram{[](bool depthOnly) {
-        auto program{std::make_unique<ShaderProgram>()};
-        addScatterDefines(*program);
-        if (depthOnly) program->addDefine("DEPTH_ONLY", "");
-        program->loadVertexShaderFromPath(s_impostorVertexPath);
-        program->loadFragmentShaderFromPath(s_impostorFragmentPath);
-        program->linkShaders();
-        return program;
-    }};
     m_gbufferDepthProgram = buildMeshProgram("DEPTH_ONLY");
     m_gbufferProgram = buildMeshProgram("EARLY_FRAGMENT_TESTS");
-    m_impostorDepthProgram = buildImpostorProgram(true);
-    m_impostorProgram = buildImpostorProgram(false);
+
+    m_impostorProgram = std::make_unique<ShaderProgram>();
+    addScatterDefines(*m_impostorProgram);
+    m_impostorProgram->loadVertexShaderFromPath(s_impostorVertexPath);
+    m_impostorProgram->loadFragmentShaderFromPath(s_impostorFragmentPath);
+    m_impostorProgram->linkShaders();
 }
 
 // Here, where ShaderProgram is a complete type, so the unique_ptrs can delete it.
@@ -311,13 +307,21 @@ void ScatterHandler::bakeImpostors(ScatterSet& set) {
 
         const int colorUnit{addTextureUnit(set.m_textureUnits, atlas.m_color)};
         const int normalUnit{addTextureUnit(set.m_textureUnits, atlas.m_normal)};
+        const int depthUnit{addTextureUnit(set.m_textureUnits, atlas.m_depth)};
+
+        // scatter_impostor.vert moves the quad to the sphere's front, which needs the
+        // camera outside the sphere wherever impostors are drawn (at an item scale of 1)
+        const ScatterLod& lastLod{kinds[kind].m_lods.back()};
+        assert(glm::length(atlas.m_centre) + atlas.m_radius <
+                   lastLod.m_maxDistance - lastLod.m_crossfadeMetres &&
+               "the camera is never inside an impostor's sphere");
 
         const ScatterImpostor& config{*kinds[kind].m_impostor};
         impostorTable[kind] = ScatterImpostorData{
             glm::vec4{atlas.m_centre, atlas.m_radius},
-            glm::ivec4{colorUnit, normalUnit, atlas.m_spec.m_viewsPerSide,
-                       atlas.m_spec.m_viewPixels},
-            glm::ivec4{atlas.m_spec.m_borderPixels, 0, 0, 0},
+            glm::ivec4{colorUnit, normalUnit, depthUnit, 0},
+            glm::ivec4{atlas.m_spec.m_viewsPerSide, atlas.m_spec.m_viewPixels,
+                       atlas.m_spec.m_borderPixels, 0},
             glm::vec4{config.m_maxDistance - config.m_fadeBandMetres, config.m_fadeBandMetres,
                       0.0, 0.0},
             glm::vec4{glm::vec3{config.m_fadeOffsetMetres}, 0.0f}};
@@ -485,8 +489,8 @@ void ScatterHandler::cull(const ScatterSet& set, const FrameRenderParams& params
 }
 
 void ScatterHandler::renderGeometry(const FrameRenderParams& params) {
-    for (ShaderProgram* program : {m_gbufferDepthProgram.get(), m_gbufferProgram.get(),
-                                   m_impostorDepthProgram.get(), m_impostorProgram.get()}) {
+    for (ShaderProgram* program :
+         {m_gbufferDepthProgram.get(), m_gbufferProgram.get(), m_impostorProgram.get()}) {
         program->use();
         setInstanceFrameUniforms(program->getID(), params);
         // Every frame, as a shader reload resets it
@@ -507,6 +511,8 @@ void ScatterHandler::renderGeometry(const FrameRenderParams& params) {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_instanceBinding, set->m_instanceListBuffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_patchBinding, set->m_patchListBuffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_kindBinding, set->m_kindTableBuffer);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_lodDistanceBinding,
+                         set->m_lodDistanceBuffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_visibleBinding, set->m_visibleBuffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_impostorBinding, set->m_impostorBuffer);
         glBindVertexArray(set->m_meshes.getVAO());
@@ -515,34 +521,40 @@ void ScatterHandler::renderGeometry(const FrameRenderParams& params) {
         // Depth first, then shade only what matches it: a pixel is shaded once
         // however many items overlap there
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-        drawSet(*set, *m_gbufferDepthProgram, *m_impostorDepthProgram);
+        drawLodMeshes(*set, *m_gbufferDepthProgram);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glDepthFunc(GL_EQUAL);
         glDepthMask(GL_FALSE);
-        drawSet(*set, *m_gbufferProgram, *m_impostorProgram);
+        drawLodMeshes(*set, *m_gbufferProgram);
         glDepthFunc(static_cast<GLenum>(depthFunc));
         glDepthMask(GL_TRUE);
+
+        // In one pass: they write their depth per pixel, which a shading pass
+        // would have to repeat with every test late
+        drawImpostors(*set);
     }
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     glBindVertexArray(0);
 }
 
-void ScatterHandler::drawSet(const ScatterSet& set, ShaderProgram& meshProgram,
-                             ShaderProgram& impostorProgram) const {
-    const GLsizei lodMeshes{static_cast<GLsizei>(set.m_meshes.getLodMeshCount())};
-    meshProgram.use();
-    bindTextures(set, meshProgram);
+void ScatterHandler::drawLodMeshes(const ScatterSet& set, ShaderProgram& program) const {
+    program.use();
+    bindTextures(set, program);
     // Both sides of a card, with the same normal
     const GLboolean culling{glIsEnabled(GL_CULL_FACE)};
     glDisable(GL_CULL_FACE);
-    glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, nullptr, lodMeshes, 0);
+    glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, nullptr,
+                                static_cast<GLsizei>(set.m_meshes.getLodMeshCount()), 0);
     if (culling) glEnable(GL_CULL_FACE);
+}
 
+void ScatterHandler::drawImpostors(const ScatterSet& set) const {
+    const GLsizei lodMeshes{static_cast<GLsizei>(set.m_meshes.getLodMeshCount())};
     const GLsizei impostors{static_cast<GLsizei>(set.m_drawCommands.size()) - lodMeshes};
     assert(impostors >= 0 && "the LOD meshes are a prefix of the commands");
     if (impostors > 0) {
-        impostorProgram.use();
-        bindTextures(set, impostorProgram);
+        m_impostorProgram->use();
+        bindTextures(set, *m_impostorProgram);
         glMultiDrawElementsIndirect(
             GL_TRIANGLES, GL_UNSIGNED_INT,
             reinterpret_cast<void*>(static_cast<uintptr_t>(lodMeshes) *
@@ -598,7 +610,7 @@ std::pair<bool, std::string> ScatterHandler::reloadShaders() {
 
     for (ShaderProgram* program :
          {m_cullProgram.get(), m_gbufferDepthProgram.get(), m_gbufferProgram.get(),
-          m_impostorDepthProgram.get(), m_impostorProgram.get()}) {
+          m_impostorProgram.get()}) {
         const auto [success, error] = program->reloadShaders();
         if (!success) {
             allSuccess = false;
@@ -687,6 +699,12 @@ void ScatterHandler::validateConfig(const ScatterSetConfig& config) {
             if (lod.m_maxDistance <= previousDistance) {
                 throw std::invalid_argument(prefix + "kind " + std::to_string(kind) +
                                             " has LOD distances that do not increase");
+            }
+            // Within its own range, so an item is in at most two meshes
+            if (lod.m_crossfadeMetres < 0.0 ||
+                lod.m_crossfadeMetres > lod.m_maxDistance - previousDistance) {
+                throw std::invalid_argument(prefix + "kind " + std::to_string(kind) +
+                                            " has a LOD crossfade wider than its range");
             }
             previousDistance = lod.m_maxDistance;
         }

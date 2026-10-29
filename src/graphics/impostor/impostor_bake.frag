@@ -8,6 +8,7 @@
 
 layout(location = 0) out vec4 outColor;   // RGB: albedo, A: coverage
 layout(location = 1) out vec4 outNormal;  // RGB: normal packed to [0, 1], A: roughness
+layout(location = 2) out float outDepth;  // impostor_bake.vert's depth
 
 // Texture arrays (MATERIAL_TEXTURE_ARRAYS)
 uniform MaterialSampler u_textures[MAX_TEXTURE_UNITS];
@@ -30,4 +31,5 @@ void main() {
 
     outColor = vec4(surface.color, 1.0);
     outNormal = vec4(surface.normal * 0.5 + 0.5, surface.roughness);
+    outDepth = gl_FragCoord.z;
 }

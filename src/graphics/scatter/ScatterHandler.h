@@ -71,10 +71,10 @@ static_assert(sizeof(ScatterKindData) == 48,
 struct ScatterImpostorData {
     // The sphere the views frame, in the mesh's frame: centre, radius
     glm::vec4 m_centreRadius{0.0f};
-    // Colour unit, normal unit, views per side, pixels per view
+    // Colour, normal and depth units; w unused
+    glm::ivec4 m_units{0};
+    // Views per side, pixels per view, border pixels; w unused
     glm::ivec4 m_atlas{0};
-    // x: border pixels
-    glm::ivec4 m_border{0};
     // Far edge band: x start metres, y width metres (0 for none)
     glm::vec4 m_fadeBand{0.0f};
     // xyz: ScatterImpostor::m_fadeOffsetMetres
@@ -154,7 +154,7 @@ struct ScatterSet {
     // Item count per block, counted up on the GPU. Items past it are stale.
     GLuint m_countBuffer{0};
 
-    // ScatterKindData per kind, and the max distance per mesh
+    // ScatterKindData per kind, and per mesh a vec2: max distance, crossfade metres
     GLuint m_kindTableBuffer{0};
     GLuint m_lodDistanceBuffer{0};
 
@@ -184,9 +184,9 @@ struct ScatterSet {
  * hold weak_ptrs, which expire with their object.
  *
  * Items are made on the GPU when a patch is added. Each frame, update culls and
- * picks each item's mesh; renderGeometry draws each set with two multi-draws, one
- * for the LOD meshes and one for the impostors, in two passes: depth first, then
- * shading only the nearest surface.
+ * picks each item's mesh; renderGeometry draws each set with two multi-draws. The
+ * LOD meshes go in two passes, depth first, then shading only the nearest surface.
+ * The impostors go in one, writing each texel's baked depth.
  */
 class ScatterHandler {
 public:
@@ -237,11 +237,10 @@ private:
     std::vector<std::shared_ptr<ScatterSet>> m_sets;
 
     std::unique_ptr<ShaderProgram> m_cullProgram;
-    // Items are drawn twice: the depth programs cut out alpha and write depth
-    // only, then the shading programs shade what matches that depth
+    // LOD meshes are drawn twice: the depth program cuts out alpha and writes
+    // depth only, then the shading program shades what matches that depth
     std::unique_ptr<ShaderProgram> m_gbufferDepthProgram;
     std::unique_ptr<ShaderProgram> m_gbufferProgram;
-    std::unique_ptr<ShaderProgram> m_impostorDepthProgram;
     std::unique_ptr<ShaderProgram> m_impostorProgram;
     std::unique_ptr<ImpostorBaker> m_impostorBaker;
 
@@ -250,9 +249,8 @@ private:
 
     void buildFrameLists(ScatterSet& set, const FrameRenderParams& params) const;
     void cull(const ScatterSet& set, const FrameRenderParams& params) const;
-    // The set's LOD meshes with meshProgram, then its impostors with impostorProgram
-    void drawSet(const ScatterSet& set, ShaderProgram& meshProgram,
-                 ShaderProgram& impostorProgram) const;
+    void drawLodMeshes(const ScatterSet& set, ShaderProgram& program) const;
+    void drawImpostors(const ScatterSet& set) const;
     void bindTextures(const ScatterSet& set, const ShaderProgram& program) const;
 
     // Throws std::invalid_argument describing the first problem found.

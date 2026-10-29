@@ -4,6 +4,7 @@
 
 TextureLayout textureLayout(TextureFormat format) {
     switch (format) {
+        case TextureFormat::R8:    return {GL_R8, GL_RED, GL_UNSIGNED_BYTE};
         case TextureFormat::R16:   return {GL_R16, GL_RED, GL_UNSIGNED_SHORT};
         // Uploaded as full float and stored as half: the narrowing is GL's, so
         // the caller never handles a 16-bit float itself.

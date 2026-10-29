@@ -21,6 +21,11 @@ flat in int vert_materialTextureUnit;
 flat in float vert_emissiveScalar;
 flat in int vert_maskTextureUnit;
 
+#ifdef CROSSFADE
+#include "dither.glsl"
+flat in vec3 vert_crossfade;
+#endif
+
 // A depth pre-pass: DEPTH_ONLY cuts and writes depth alone (the reads only the
 // outputs need are compiled away), then EARLY_FRAGMENT_TESTS shades what passed.
 #ifdef EARLY_FRAGMENT_TESTS
@@ -28,6 +33,9 @@ layout(early_fragment_tests) in;
 #endif
 
 void main() {
+#ifdef CROSSFADE
+   if (!ditherKeeps(vert_crossfade)) discard;
+#endif
    SurfaceMaterial surface = decodeSurfaceMaterial(
       u_textures, vert_normal, vert_TBN, vert_uv, vert_color,
       vert_colorTextureUnit, vert_normalTextureUnit, vert_materialTextureUnit,

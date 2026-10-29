@@ -2,7 +2,7 @@
 #version 460 core
 
 // Orthographic view from the cell's direction, framing the mesh's sphere.
-// Reverse-Z: 1 nearest.
+// Reverse-Z: depth runs from 0 at the sphere's back to 1 at its front.
 
 #include "impostor_views.glsl"
 

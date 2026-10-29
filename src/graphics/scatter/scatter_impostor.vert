@@ -12,9 +12,6 @@ layout(std430, binding = SCATTER_IMPOSTOR_BINDING) readonly buffer ScatterImpost
     ScatterImpostorData impostors[];
 };
 
-// The depth pre-pass and the shading pass must place it alike
-invariant gl_Position;
-
 // In [-1, 1]^2
 layout (location = 0) in vec3 position;
 
@@ -26,10 +23,15 @@ out vec2 vert_atlasUV[4];
 flat out vec4 vert_cellRect[4];
 flat out vec4 vert_weights;
 flat out mat3 vert_meshToView;
-// Colour and normal atlas units
-flat out ivec2 vert_atlasUnits;
+// Colour, normal and depth atlas units
+flat out ivec3 vert_atlasUnits;
+// View z on the plane through the sphere's centre, and how far the depth atlas
+// moves it at the sphere's front
+out float vert_viewDepth;
+flat out float vert_depthReach;
 flat out float vert_atlasSide;
 flat out float vert_maxLod;
+flat out vec3 vert_crossfade;
 
 void main() {
     const ScatterDrawnItem drawn = scatterDrawnItem();
@@ -49,7 +51,7 @@ void main() {
     vec3 viewed = vec3(toCamera.xy, max(toCamera.z, 0.0));
     viewed = dot(viewed, viewed) > 0.0 ? normalize(viewed) : vec3(1.0, 0.0, 0.0);
     // Position among the cell centres: the four cells around it and the weights
-    const int viewsPerSide = impostor.atlas.z;
+    const int viewsPerSide = impostor.atlas.x;
     const vec2 square = impostorSquare(viewed);
     const vec2 inCentres = (square * 0.5 + 0.5) * float(viewsPerSide) - 0.5;
     const ivec2 firstCell = ivec2(floor(inCentres));
@@ -65,18 +67,27 @@ void main() {
     const vec3 quadPoint = centre + fromCentre;
 
     // In the far band: shrink about the origin and move by the offset
-    const float distance = length(
-        (drawn.patchData.cameraOffset + drawn.item.positionScale.xyz) *
-        drawn.instance.bodyScale.xyz);
+    const float distance = scatterDistance(drawn);
     const float intoBand = impostor.fadeBand.y > 0.0
         ? clamp((distance - impostor.fadeBand.x) / impostor.fadeBand.y, 0.0, 1.0)
         : 0.0;
     const vec3 meshPoint =
         quadPoint * (1.0 - intoBand) + impostor.fadeOffset.xyz * intoBand;
-    gl_Position = projection * view * vec4(scatterCameraRelative(drawn, meshPoint), 1.0);
+    const vec3 cameraRelative = scatterCameraRelative(drawn, meshPoint);
+    const vec4 viewPosition = view * vec4(cameraRelative, 1.0);
+    const vec3 reach = scatterCameraRelative(
+        drawn, meshPoint + toCamera * radius * (1.0 - intoBand)) - cameraRelative;
+    vert_viewDepth = viewPosition.z;
+    vert_depthReach = (mat3(view) * reach).z;
+    // Moved along the camera's rays to the sphere's front: the same on screen,
+    // and in front of the surface, which the fragments only push back
+    const vec3 meshCentre = centre * (1.0 - intoBand) + impostor.fadeOffset.xyz * intoBand;
+    const float toFront =
+        max(1.0 - length(reach) / length(scatterCameraRelative(drawn, meshCentre)), 0.0);
+    gl_Position = projection * vec4(viewPosition.xyz * toFront, 1.0);
 
-    const float viewPixels = float(impostor.atlas.w);
-    const float border = float(impostor.border.x);
+    const float viewPixels = float(impostor.atlas.y);
+    const float border = float(impostor.atlas.z);
     const float side = float(viewsPerSide) * viewPixels;
     for (int nearest = 0; nearest < 4; ++nearest) {
         const ivec2 offset = ivec2(nearest & 1, nearest >> 1);
@@ -99,9 +110,10 @@ void main() {
     }
 
     vert_meshToView = mat3(view) * drawn.instance.bodyRotation * drawn.rotation;
-    vert_atlasUnits = impostor.atlas.xy;
+    vert_atlasUnits = impostor.units.xyz;
     vert_atlasSide = side;
     // The coarsest mip whose cells are whole texels and at least four across, so
     // no texel straddles two views
-    vert_maxLod = float(min(findLSB(impostor.atlas.w), findMSB(impostor.atlas.w / 4)));
+    vert_maxLod = float(min(findLSB(impostor.atlas.y), findMSB(impostor.atlas.y / 4)));
+    vert_crossfade = scatterCrossfade(drawn, kinds[drawn.item.kind].lodCount);
 }

@@ -5,10 +5,6 @@
 
 #include "scatter_item.glsl"
 
-layout(std430, binding = SCATTER_KIND_BINDING) readonly buffer ScatterKindBuffer {
-    ScatterKindData kinds[];
-};
-
 layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normal;
 layout (location = 2) in vec3 tangent;
@@ -32,6 +28,7 @@ flat out int vert_normalTextureUnit;
 flat out int vert_materialTextureUnit;
 flat out float vert_emissiveScalar;
 flat out int vert_maskTextureUnit;
+flat out vec3 vert_crossfade;
 
 void main() {
     const ScatterDrawnItem drawn = scatterDrawnItem();
@@ -56,6 +53,8 @@ void main() {
     vert_materialTextureUnit = kind.textureUnits.z;
     vert_maskTextureUnit = kind.textureUnits.w;
     vert_emissiveScalar = 0.0;
+    // The LOD meshes are drawn from command 0, so the draw is the mesh
+    vert_crossfade = scatterCrossfade(drawn, uint(gl_DrawID) - kind.firstMesh);
 
     gl_Position = projection * viewPosition;
 }

@@ -17,6 +17,12 @@ layout(std430, binding = SCATTER_PATCH_BINDING) readonly buffer ScatterPatchBuff
 layout(std430, binding = SCATTER_VISIBLE_BINDING) readonly buffer ScatterVisibleBuffer {
     uvec2 visible[];
 };
+layout(std430, binding = SCATTER_KIND_BINDING) readonly buffer ScatterKindBuffer {
+    ScatterKindData kinds[];
+};
+layout(std430, binding = SCATTER_LOD_DISTANCE_BINDING) readonly buffer ScatterLodDistanceBuffer {
+    vec2 lodDistances[];
+};
 
 struct ScatterDrawnItem {
     ScatterItem item;
@@ -47,4 +53,22 @@ vec3 scatterBodyOffset(ScatterDrawnItem drawn, vec3 meshPoint) {
 vec3 scatterCameraRelative(ScatterDrawnItem drawn, vec3 meshPoint) {
     return drawn.instance.bodyRotation
          * (scatterBodyOffset(drawn, meshPoint) * drawn.instance.bodyScale.xyz);
+}
+
+float scatterDistance(ScatterDrawnItem drawn) {
+    return scatterItemDistance(drawn.patchData.cameraOffset, drawn.item.positionScale.xyz,
+                               drawn.instance.bodyScale.xyz);
+}
+
+// For dither.glsl: the noise range a mesh keeps as it dithers out (x up) and the
+// previous LOD dithers out of it (y down), shifted per item. lod is the kind's
+// lodCount for its impostor.
+vec3 scatterCrossfade(ScatterDrawnItem drawn, uint lod) {
+    const ScatterKindData kind = kinds[drawn.item.kind];
+    const float distance = scatterDistance(drawn);
+    const uint mesh = lod < kind.lodCount ? kind.firstMesh + lod : kind.impostorMesh;
+    const float fadeIn =
+        lod > 0u ? scatterHandover(lodDistances[kind.firstMesh + lod - 1u], distance) : 1.0;
+    return vec3(scatterHandover(lodDistances[mesh], distance), fadeIn,
+                fract(float(drawn.item.candidateId) * 0.618034));
 }

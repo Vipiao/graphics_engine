@@ -21,6 +21,9 @@ struct ScatterLod {
     std::string m_modelPath;
     // Metres; used from the previous LOD's distance up to this
     double m_maxDistance{0.0};
+    // Over this many metres before m_maxDistance it dithers into the next LOD,
+    // the impostor or nothing. 0 to switch at once.
+    double m_crossfadeMetres{0.0};
 };
 
 // A kind's far stand-in: a baked picture of its last LOD (ImpostorBaker), so
