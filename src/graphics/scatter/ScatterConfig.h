@@ -57,6 +57,16 @@ struct ScatterMaterial {
     std::string m_maskTexturePath;
 };
 
+// A mesh cast into the shadow maps in place of the LODs and the impostor, so the
+// shadow does not change with the camera. It has the LODs' materials.
+struct ScatterShadow {
+    std::string m_modelPath;
+    // Metres from the camera; items further away cast nothing
+    double m_maxDistance{0.0};
+    // Dithered out over this many metres before m_maxDistance; 0 to stop at once
+    double m_fadeMetres{0.0};
+};
+
 struct ScatterKind {
     // Nearest first. Not drawn past the last one (or the impostor).
     std::vector<ScatterLod> m_lods;
@@ -64,6 +74,8 @@ struct ScatterKind {
     glm::dvec4 m_color{1.0, 1.0, 1.0, 1.0};
     std::vector<ScatterMaterial> m_materials;
     std::optional<ScatterImpostor> m_impostor;
+    // None to cast with the LOD the camera picks, and nothing past the last
+    std::optional<ScatterShadow> m_shadow;
 };
 
 struct ScatterSetConfig {
@@ -73,6 +85,8 @@ struct ScatterSetConfig {
     // come and go without moving each other's items
     uint32_t m_maxPatches{0};
     uint32_t m_itemsPerPatch{0};
+    // Items cast into this many shadow cascades, nearest first, and none past them
+    uint32_t m_shadowCascades{std::numeric_limits<uint32_t>::max()};
 
     // The furthest any kind is drawn
     double drawDistance() const {

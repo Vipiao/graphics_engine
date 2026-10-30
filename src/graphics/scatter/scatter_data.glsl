@@ -34,6 +34,11 @@ struct ScatterKindData {
     float boundingRadius;
     // The impostor quad's mesh, or SCATTER_NO_MESH.
     uint impostorMesh;
+    // The mesh it casts shadows with, or SCATTER_NO_MESH.
+    uint shadowMesh;
+    uint padding0;
+    uint padding1;
+    uint padding2;
 };
 
 struct ScatterImpostorData {

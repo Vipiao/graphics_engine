@@ -294,6 +294,8 @@ public:
     void removeScatterInstance(std::weak_ptr<ScatterInstance> instance);
     std::weak_ptr<ScatterPatch> addScatterPatch(std::weak_ptr<ScatterInstance> instance,
                                                 const glm::dvec3& origin,
+                                                const glm::dvec3& boundsCentre,
+                                                double boundsRadius,
                                                 const glm::uvec4& payload);
     void removeScatterPatch(std::weak_ptr<ScatterPatch> patch);
 

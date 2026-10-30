@@ -53,8 +53,11 @@ void main() {
     vert_materialTextureUnit = kind.textureUnits.z;
     vert_maskTextureUnit = kind.textureUnits.w;
     vert_emissiveScalar = 0.0;
-    // The LOD meshes are drawn from command 0, so the draw is the mesh
-    vert_crossfade = scatterCrossfade(drawn, uint(gl_DrawID) - kind.firstMesh);
+    // The LOD meshes are drawn from command 0, so the draw is the mesh. The shadow
+    // mesh is an item's only caster, so only fades out at its far end.
+    const uint mesh = uint(gl_DrawID);
+    vert_crossfade = mesh == kind.shadowMesh ? scatterFadeOut(drawn, mesh)
+                                             : scatterCrossfade(drawn, mesh - kind.firstMesh);
 
     gl_Position = projection * viewPosition;
 }

@@ -60,6 +60,11 @@ float scatterDistance(ScatterDrawnItem drawn) {
                                drawn.instance.bodyScale.xyz);
 }
 
+// The item's shift of the dither noise, so neighbours do not thin in step
+float scatterDitherShift(ScatterDrawnItem drawn) {
+    return fract(float(drawn.item.candidateId) * 0.618034);
+}
+
 // For dither.glsl: the noise range a mesh keeps as it dithers out (x up) and the
 // previous LOD dithers out of it (y down), shifted per item. lod is the kind's
 // lodCount for its impostor.
@@ -70,5 +75,11 @@ vec3 scatterCrossfade(ScatterDrawnItem drawn, uint lod) {
     const float fadeIn =
         lod > 0u ? scatterHandover(lodDistances[kind.firstMesh + lod - 1u], distance) : 1.0;
     return vec3(scatterHandover(lodDistances[mesh], distance), fadeIn,
-                fract(float(drawn.item.candidateId) * 0.618034));
+                scatterDitherShift(drawn));
+}
+
+// The same for a mesh with nothing dithering into it, only out over its band
+vec3 scatterFadeOut(ScatterDrawnItem drawn, uint mesh) {
+    return vec3(scatterHandover(lodDistances[mesh], scatterDistance(drawn)), 1.0,
+                scatterDitherShift(drawn));
 }

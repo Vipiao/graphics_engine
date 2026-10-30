@@ -19,9 +19,10 @@ struct ScatterMeshRange {
  * @brief Every mesh of a set in one vertex and one index buffer, so one
  * multi-draw draws them all.
  *
- * Numbered kind by kind, LODs nearest first (meshIndex), then one quad per kind
- * with an impostor (impostorMesh). Vertices are GeometryVertex at locations 0 to 3,
- * and their material's texture layer, a float, at 4.
+ * Numbered kind by kind, LODs nearest first (meshIndex) and the shadow mesh if any
+ * (shadowMesh), then one quad per kind with an impostor (impostorMesh). Vertices are
+ * GeometryVertex at locations 0 to 3, and their material's texture layer, a float,
+ * at 4.
  */
 class ScatterMeshes {
 public:
@@ -37,12 +38,15 @@ public:
     uint32_t meshIndex(uint32_t kind, uint32_t lod) const;
     // Or k_noMesh
     uint32_t impostorMesh(uint32_t kind) const { return m_impostorMeshOfKind[kind]; }
+    // Or k_noMesh
+    uint32_t shadowMesh(uint32_t kind) const { return m_shadowMeshOfKind[kind]; }
     uint32_t getMeshCount() const { return static_cast<uint32_t>(m_ranges.size()); }
-    // The LOD meshes come first, the impostor quads after
+    // The LOD and shadow meshes come first, the impostor quads after
     uint32_t getLodMeshCount() const { return m_lodMeshCount; }
     const ScatterMeshRange& getRange(uint32_t meshIndex) const { return m_ranges[meshIndex]; }
 
-    // Around the item's origin, over all of the kind's LODs, before scale
+    // Around the item's origin, over all of the kind's LODs and its shadow mesh,
+    // before scale
     float getBoundingRadius(uint32_t kind) const { return m_boundingRadii[kind]; }
 
     // A tight sphere around one mesh: the middle of its box, and its farthest
@@ -60,6 +64,7 @@ private:
     // Per kind
     std::vector<uint32_t> m_firstMeshOfKind;
     std::vector<uint32_t> m_impostorMeshOfKind;
+    std::vector<uint32_t> m_shadowMeshOfKind;
     std::vector<float> m_boundingRadii;
     uint32_t m_lodMeshCount{0};
 

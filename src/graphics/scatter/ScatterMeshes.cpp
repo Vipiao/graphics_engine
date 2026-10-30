@@ -117,9 +117,9 @@ ScatterMeshes::ScatterMeshes(const std::vector<ScatterKind>& kinds) {
         m_firstMeshOfKind.push_back(static_cast<uint32_t>(m_ranges.size()));
 
         float boundingRadius{0.0f};
-        for (const ScatterLod& lod : kind.m_lods) {
+        const auto appendKindModel{[&](const std::string& modelPath) {
             const ScatterMeshRange range{
-                appendModel(lod.m_modelPath, kind.m_materials, vertices, layers, indices)};
+                appendModel(modelPath, kind.m_materials, vertices, layers, indices)};
             m_ranges.push_back(range);
 
             const size_t firstVertex{static_cast<size_t>(range.m_baseVertex)};
@@ -138,6 +138,16 @@ ScatterMeshes::ScatterMeshes(const std::vector<ScatterKind>& kinds) {
             }
             m_centres.push_back(centre);
             m_radii.push_back(radius);
+        }};
+
+        for (const ScatterLod& lod : kind.m_lods) {
+            appendKindModel(lod.m_modelPath);
+        }
+        if (!kind.m_shadow) {
+            m_shadowMeshOfKind.push_back(k_noMesh);
+        } else {
+            m_shadowMeshOfKind.push_back(static_cast<uint32_t>(m_ranges.size()));
+            appendKindModel(kind.m_shadow->m_modelPath);
         }
         m_boundingRadii.push_back(boundingRadius);
     }
@@ -200,9 +210,11 @@ ScatterMeshes::~ScatterMeshes() {
 uint32_t ScatterMeshes::meshIndex(uint32_t kind, uint32_t lod) const {
     assert(kind < m_firstMeshOfKind.size() && "Kind out of range");
     const uint32_t index{m_firstMeshOfKind[kind] + lod};
-    // The next kind's first mesh, or the impostor quads, bound this kind's LODs
-    assert((kind + 1 < m_firstMeshOfKind.size() ? index < m_firstMeshOfKind[kind + 1]
-                                                : index < m_lodMeshCount) &&
+    // The shadow mesh, the next kind's first mesh, or the impostor quads, bound
+    // this kind's LODs
+    assert((m_shadowMeshOfKind[kind] != k_noMesh ? index < m_shadowMeshOfKind[kind]
+            : kind + 1 < m_firstMeshOfKind.size() ? index < m_firstMeshOfKind[kind + 1]
+                                                  : index < m_lodMeshCount) &&
            "LOD out of range");
     return index;
 }

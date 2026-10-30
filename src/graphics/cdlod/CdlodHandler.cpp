@@ -3,12 +3,12 @@
 #include "CdlodPatchGeometry.h"
 #include "../SSBOManager.h"
 #include "../TextureStore.h"
+#include "../CasterTiers.h"
 #include "../InstanceFrameUniforms.h"
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <stdexcept>
-#include <glm/gtc/epsilon.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "math/DekkerArithmetic.h"
 
@@ -40,33 +40,6 @@ void spliceSurfaceBody(std::string& source, const std::string& body) {
 // cover -- that band blends receivers, and the loss is up-light of them. Too large
 // only draws patches that clip away.
 constexpr double k_casterBoundsMargin{1.5};
-
-// A caster volume as the body's own frame sees it. Four of these against thousands
-// of patches, so it is the volumes that are carried across rather than the bounds.
-Cylinder volumeInBodySpace(const Cylinder& volume, const BodyPose& pose) {
-    assert(glm::all(glm::epsilonEqual(pose.m_scale, glm::dvec3{pose.m_scale.x}, 1e-12)) &&
-           "Non-uniform scale: a bounding sphere would not stay one in the body's frame");
-    const double scale{pose.m_scale.x};
-
-    return Cylinder{glm::normalize(pose.m_inverseBodyRotation * volume.m_axis),
-                    pose.m_cameraBodyPosition +
-                        (pose.m_inverseBodyRotation * volume.m_centre) / scale,
-                    volume.m_radius / scale, volume.m_axialMin / scale,
-                    volume.m_axialMax / scale};
-}
-
-// The innermost volume a patch can cast into, or one past the last if it casts into
-// none. They only nearly nest -- a shared caster reach runs from centres that do not
-// coincide -- so every volume is tested, not just the outermost.
-unsigned int casterTier(const std::vector<Cylinder>& bodyVolumes, const glm::dvec3& centre,
-                        double radius) {
-    for (size_t tier{0}; tier < bodyVolumes.size(); ++tier) {
-        if (intersectsSphere(bodyVolumes[tier], centre, radius)) {
-            return static_cast<unsigned int>(tier);
-        }
-    }
-    return static_cast<unsigned int>(bodyVolumes.size());
-}
 
 // A tree's leaf as the vertex stages read it. The narrowing to float happens
 // here rather than in the tree, which works in double throughout and has no
@@ -391,7 +364,11 @@ void CdlodHandler::update(const FrameRenderParams& params,
     for (const std::shared_ptr<CdlodSurface>& surface : m_surfaces) {
         selectVisibleNodes(*surface, params.time, params.timeRemainder, params.camPos,
                            casterVolumes);
-        sortPatchesByTier(*surface, casterVolumes.size());
+        // One tier per volume, plus the one holding what no volume reaches
+        TierGrouping<CdlodPatch> grouped{groupByTier(
+            surface->m_selectedPatches, surface->m_patchTiers, casterVolumes.size() + 1)};
+        surface->m_selectedPatches = std::move(grouped.m_pieces);
+        surface->m_tierPrefix = std::move(grouped.m_tierEnds);
         uploadSelection(*surface);
     }
 }
@@ -416,9 +393,9 @@ void CdlodHandler::selectVisibleNodes(CdlodSurface& surface, uint64_t time,
 
         // Into the body's frame once rather than per patch: the frame the tree
         // already works in.
-        m_bodyCylinders.clear();
+        std::vector<Cylinder> bodyCylinders;
         for (const Cylinder& cylinder : casterVolumes) {
-            m_bodyCylinders.push_back(volumeInBodySpace(cylinder, instance.m_pose));
+            bodyCylinders.push_back(casterVolumeInBodySpace(cylinder, instance.m_pose));
         }
 
         // The tree describes leaves, not who owns them: the ones it appended are
@@ -431,40 +408,12 @@ void CdlodHandler::selectVisibleNodes(CdlodSurface& surface, uint64_t time,
             surface.m_selectedPatches.push_back(
                 makePatch(selected, static_cast<int32_t>(instanceIndex)));
             surface.m_patchTiers.push_back(
-                casterTier(m_bodyCylinders, selected.m_boundsCentre,
+                casterTier(bodyCylinders, selected.m_boundsCentre,
                            selected.m_boundsRadius * k_casterBoundsMargin));
         }
 
         surface.m_instanceData[instanceIndex] = makeInstanceData(instance);
     }
-}
-
-void CdlodHandler::sortPatchesByTier(CdlodSurface& surface, size_t tierCount) {
-    // One tier per volume, plus the one holding what no volume reaches.
-    const size_t tiers{tierCount + 1};
-
-    m_tierCursor.assign(tiers, 0);
-    for (unsigned int tier : surface.m_patchTiers) {
-        ++m_tierCursor[tier];
-    }
-
-    // The running sum leaves the cursor at each tier's block start and m_tierPrefix
-    // at its end: the patch count a draw of that tier asks for.
-    surface.m_tierPrefix.assign(tiers, 0);
-    size_t start{0};
-    for (size_t tier{0}; tier < tiers; ++tier) {
-        const size_t count{m_tierCursor[tier]};
-        m_tierCursor[tier] = start;
-        start += count;
-        surface.m_tierPrefix[tier] = start;
-    }
-
-    surface.m_sortedPatches.resize(surface.m_selectedPatches.size());
-    for (size_t patch{0}; patch < surface.m_selectedPatches.size(); ++patch) {
-        surface.m_sortedPatches[m_tierCursor[surface.m_patchTiers[patch]]++] =
-            surface.m_selectedPatches[patch];
-    }
-    surface.m_selectedPatches.swap(surface.m_sortedPatches);
 }
 
 void CdlodHandler::uploadSelection(CdlodSurface& surface) {

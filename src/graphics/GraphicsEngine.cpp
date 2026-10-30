@@ -157,11 +157,13 @@ void GraphicsEngine::renderScene() {
     // disagree at a subdivision boundary. The cascades only group that one
     // selection, so a cascade draws a prefix of what the camera draws whole.
     // No volumes leaves the selection in one tier, which every pass draws whole.
-    m_cdlodHandler->update(frameParams, m_shadowsEnabled ? m_shadowRenderer->getCasterVolumes()
-                                                         : std::vector<Cylinder>{});
+    const std::vector<Cylinder> casterVolumes{
+        m_shadowsEnabled ? m_shadowRenderer->getCasterVolumes() : std::vector<Cylinder>{}};
+    m_cdlodHandler->update(frameParams, casterVolumes);
 
-    // Scattered items placed against the same camera and body poses.
-    m_scatterHandler->update(frameParams);
+    // Scattered items placed against the same camera and body poses, their patches
+    // grouped by the same volumes.
+    m_scatterHandler->update(frameParams, casterVolumes);
 
     unsigned int shadowMapTextureArray = 0;
 
@@ -265,13 +267,16 @@ void GraphicsEngine::renderShadowPass() {
         depthParams.casterTier = cascadeIndex;
 
         // Render depth-only pass for shadow mapping. Only opaque objects cast shadows.
-        // The pass culls front faces for all three, set once in beginShadowPass.
+        // The pass culls back faces, set once in beginShadowPass; scatter cards
+        // turn it off around their own draws.
         m_meshHandler->renderDepth(
             depthParams, /*renderOpaque=*/true, /*renderTransparent=*/false);
 
         m_instanceHandler->renderDepth(depthParams);
 
         m_cdlodHandler->renderDepth(depthParams);
+
+        m_scatterHandler->renderDepth(depthParams);
     }
 }
 
@@ -521,8 +526,8 @@ void GraphicsEngine::removeScatterInstance(std::weak_ptr<ScatterInstance> instan
 
 std::weak_ptr<ScatterPatch> GraphicsEngine::addScatterPatch(
     std::weak_ptr<ScatterInstance> instance, const glm::dvec3& origin,
-    const glm::uvec4& payload) {
-    return m_scatterHandler->addPatch(instance, origin, payload);
+    const glm::dvec3& boundsCentre, double boundsRadius, const glm::uvec4& payload) {
+    return m_scatterHandler->addPatch(instance, origin, boundsCentre, boundsRadius, payload);
 }
 
 void GraphicsEngine::removeScatterPatch(std::weak_ptr<ScatterPatch> patch) {

@@ -15,6 +15,7 @@
 #include "ScatterConfig.h"
 #include "ScatterMeshes.h"
 #include "../impostor/ImpostorBaker.h"
+#include "math/Cylinder.h"
 
 class ShaderProgram;
 class SSBOManager;
@@ -58,14 +59,17 @@ struct ScatterKindData {
     // LOD n is mesh m_firstMesh + n
     uint32_t m_firstMesh{0};
     uint32_t m_lodCount{0};
-    // About the item's origin, before its scale: holds every LOD and the
-    // impostor. Items whose sphere is out of view are not drawn.
+    // About the item's origin, before its scale: holds every LOD, the shadow mesh
+    // and the impostor. Items whose sphere is out of view are not drawn.
     float m_boundingRadius{0.0f};
     // Drawn past the last LOD, or ScatterMeshes::k_noMesh
     uint32_t m_impostorMesh{ScatterMeshes::k_noMesh};
+    // ScatterKind::m_shadow's mesh, or ScatterMeshes::k_noMesh
+    uint32_t m_shadowMesh{ScatterMeshes::k_noMesh};
+    uint32_t m_padding[3]{};
 };
-static_assert(sizeof(ScatterKindData) == 48,
-              "ScatterKindData must match the 48-byte std430 layout the scatter shaders read");
+static_assert(sizeof(ScatterKindData) == 64,
+              "ScatterKindData must match the 64-byte std430 layout the scatter shaders read");
 
 // One per kind, zeroed for kinds without an impostor.
 struct ScatterImpostorData {
@@ -97,6 +101,15 @@ struct ScatterDrawCommand {
 static_assert(sizeof(ScatterDrawCommand) == 20,
               "ScatterDrawCommand must match GL's DrawElementsIndirectCommand");
 
+// The draw commands a cull counts up and the visible list it fills. The camera has
+// one and the shadow cascades share one, so neither overwrites the other.
+struct ScatterDrawList {
+    GLuint m_commandBuffer{0};
+    // uvec2 (item, patch list index). One part per mesh, each with room for every
+    // item, so no part can overflow.
+    GLuint m_visibleBuffer{0};
+};
+
 // A texture the set's snippet samples through the sampler it declares.
 struct ScatterSnippetTexture {
     std::string m_samplerName;
@@ -109,6 +122,9 @@ struct ScatterPatch {
     uint32_t m_slot{0};
     // In the body's frame. Double: on a planet it is millions of metres out.
     glm::dvec3 m_origin{0.0};
+    // A sphere holding every item, meshes included, in the body's frame and units
+    glm::dvec3 m_boundsCentre{0.0};
+    double m_boundsRadius{0.0};
 };
 
 // A set placed on one body.
@@ -159,19 +175,19 @@ struct ScatterSet {
     GLuint m_kindTableBuffer{0};
     GLuint m_lodDistanceBuffer{0};
 
-    // With every count at 0, uploaded each frame before culling
+    // With every count at 0, uploaded before each cull
     std::vector<ScatterDrawCommand> m_drawCommands;
-    GLuint m_commandBuffer{0};
+    ScatterDrawList m_cameraList;
+    ScatterDrawList m_shadowList;
 
-    // uvec2 (item, patch list index). One part per mesh, each with room for every
-    // item, so no part can overflow.
-    GLuint m_visibleBuffer{0};
-
-    // This frame's lists. Patches name their instance by its index in the list.
+    // This frame's lists. Patches name their instance by its index in the list,
+    // and are grouped by caster tier (CasterTiers.h).
     std::vector<ScatterInstanceData> m_instanceList;
     std::vector<ScatterPatchData> m_patchList;
     GLuint m_instanceListBuffer{0};
     GLuint m_patchListBuffer{0};
+    // Patches a cull of cascade k covers; one entry per cascade plus one
+    std::vector<size_t> m_tierEnds;
 
     std::vector<uint32_t> m_freeSlots;
 
@@ -188,6 +204,10 @@ struct ScatterSet {
  * picks each item's mesh; renderGeometry draws each set with two multi-draws. The
  * LOD meshes go in two passes, depth first, then shading only the nearest surface.
  * The impostors go in one, writing each texel's baked depth.
+ *
+ * renderDepth culls again per cascade, over the patches of tiers up to it, and draws
+ * depth-only: the kind's shadow mesh if it has one, else the LOD the camera would
+ * pick. Impostors never cast.
  */
 class ScatterHandler {
 public:
@@ -212,18 +232,24 @@ public:
                                                   int ssboIndex);
     void removeInstance(std::weak_ptr<ScatterInstance> instance);
 
-    // Queues the generation of the patch's items without waiting for it. Throws
-    // if the instance has expired or the set has no free block.
+    // Queues the generation of the patch's items without waiting for it. The bounds
+    // hold every item, meshes included, in the body's frame. Throws if the instance
+    // has expired or the set has no free block.
     std::weak_ptr<ScatterPatch> addPatch(std::weak_ptr<ScatterInstance> instance,
                                          const glm::dvec3& origin,
+                                         const glm::dvec3& boundsCentre, double boundsRadius,
                                          const glm::uvec4& payload);
     void removePatch(std::weak_ptr<ScatterPatch> patch);
 
-    // Once per frame, before drawing.
-    void update(const FrameRenderParams& params);
+    // Once per frame, before drawing. casterVolumes as ShadowRenderer gives them,
+    // empty without shadows.
+    void update(const FrameRenderParams& params, const std::vector<Cylinder>& casterVolumes);
 
     // Into the bound G-buffer, after update.
     void renderGeometry(const FrameRenderParams& params);
+
+    // Into the bound shadow cascade params.casterTier, after update.
+    void renderDepth(const FrameRenderParams& params);
 
     // As impostor_<kind>_*.png in directory. False if any could not be written.
     bool writeImpostorImages(std::weak_ptr<ScatterSet> set,
@@ -248,8 +274,14 @@ private:
     // Bakes from each kind's last LOD and adds the atlases to the set's units.
     void bakeImpostors(ScatterSet& set);
 
-    void buildFrameLists(ScatterSet& set, const FrameRenderParams& params) const;
-    void cull(const ScatterSet& set, const FrameRenderParams& params) const;
+    void buildFrameLists(ScatterSet& set, const FrameRenderParams& params,
+                         const std::vector<Cylinder>& casterVolumes) const;
+    // Counts from 0 into list, over the first patchCount patches. shadowCasters as
+    // scatter_cull.comp's u_shadowCasters.
+    void cull(const ScatterSet& set, const FrameRenderParams& params,
+              const ScatterDrawList& list, size_t patchCount, bool shadowCasters) const;
+    // Buffers, VAO and commands the draws read
+    static void bindDrawInputs(const ScatterSet& set, const ScatterDrawList& list);
     void drawLodMeshes(const ScatterSet& set, ShaderProgram& program) const;
     void drawImpostors(const ScatterSet& set) const;
     void bindTextures(const ScatterSet& set, const ShaderProgram& program) const;

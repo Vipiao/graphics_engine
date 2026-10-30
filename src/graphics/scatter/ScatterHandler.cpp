@@ -1,6 +1,7 @@
 // ScatterHandler.cpp
 #include "ScatterHandler.h"
 #include "../BodyPose.h"
+#include "../CasterTiers.h"
 #include "../FrameRenderParams.h"
 #include "../InstanceFrameUniforms.h"
 #include "../SSBOManager.h"
@@ -168,12 +169,17 @@ ScatterSet::ScatterSet(const ScatterSetConfig& config, TextureStore& textureStor
                  glm::length(m_meshes.getCentre(lastLod)) + m_meshes.getRadius(lastLod),
                  static_cast<float>(glm::length(kindConfig.m_impostor->m_fadeOffsetMetres))});
         }
-        kindTable.push_back(ScatterKindData{glm::vec4{kindConfig.m_color}, textureUnits,
-                                            m_meshes.meshIndex(kind, 0),
-                                            static_cast<uint32_t>(lods.size()), boundingRadius,
-                                            m_meshes.impostorMesh(kind)});
+        kindTable.push_back(ScatterKindData{
+            glm::vec4{kindConfig.m_color}, textureUnits, m_meshes.meshIndex(kind, 0),
+            static_cast<uint32_t>(lods.size()), boundingRadius, m_meshes.impostorMesh(kind),
+            m_meshes.shadowMesh(kind)});
         for (const ScatterLod& lod : lods) {
             lodDistances.emplace_back(lod.m_maxDistance, lod.m_crossfadeMetres);
+        }
+        // The shadow mesh follows its kind's LODs
+        if (kindConfig.m_shadow) {
+            lodDistances.emplace_back(kindConfig.m_shadow->m_maxDistance,
+                                      kindConfig.m_shadow->m_fadeMetres);
         }
     }
     // The impostor quads follow every LOD mesh, in kind order
@@ -194,9 +200,11 @@ ScatterSet::ScatterSet(const ScatterSetConfig& config, TextureStore& textureStor
             range.m_indexCount, 0, range.m_firstIndex, range.m_baseVertex,
             static_cast<uint32_t>(mesh * itemCapacity)});
     }
-    glGenBuffers(1, &m_commandBuffer);
-    m_visibleBuffer =
-        createStorageBuffer(m_meshes.getMeshCount() * itemCapacity * sizeof(glm::uvec2));
+    for (ScatterDrawList* list : {&m_cameraList, &m_shadowList}) {
+        glGenBuffers(1, &list->m_commandBuffer);
+        list->m_visibleBuffer =
+            createStorageBuffer(m_meshes.getMeshCount() * itemCapacity * sizeof(glm::uvec2));
+    }
 
     // Reversed, so block 0 is handed out first
     m_freeSlots.reserve(config.m_maxPatches);
@@ -214,8 +222,10 @@ ScatterSet::~ScatterSet() {
     if (m_patchListBuffer != 0) glDeleteBuffers(1, &m_patchListBuffer);
     if (m_kindTableBuffer != 0) glDeleteBuffers(1, &m_kindTableBuffer);
     if (m_lodDistanceBuffer != 0) glDeleteBuffers(1, &m_lodDistanceBuffer);
-    if (m_commandBuffer != 0) glDeleteBuffers(1, &m_commandBuffer);
-    if (m_visibleBuffer != 0) glDeleteBuffers(1, &m_visibleBuffer);
+    for (ScatterDrawList* list : {&m_cameraList, &m_shadowList}) {
+        if (list->m_commandBuffer != 0) glDeleteBuffers(1, &list->m_commandBuffer);
+        if (list->m_visibleBuffer != 0) glDeleteBuffers(1, &list->m_visibleBuffer);
+    }
 }
 
 ScatterHandler::ScatterHandler(SSBOManager* ssboManager, TextureStore* textureStore)
@@ -407,13 +417,14 @@ void ScatterHandler::removeInstance(std::weak_ptr<ScatterInstance> instanceWeak)
 
 std::weak_ptr<ScatterPatch> ScatterHandler::addPatch(
     std::weak_ptr<ScatterInstance> instanceWeak, const glm::dvec3& origin,
-    const glm::uvec4& payload) {
+    const glm::dvec3& boundsCentre, double boundsRadius, const glm::uvec4& payload) {
     const std::shared_ptr<ScatterInstance> instance{instanceWeak.lock()};
     if (!instance) {
         throw std::runtime_error("ScatterHandler::addPatch: instance has expired");
     }
     ScatterSet& set{*instance->m_set};
 
+    assert(boundsRadius > 0.0 && "a patch's bounds hold its items");
     if (set.m_freeSlots.empty()) {
         throw std::runtime_error("ScatterHandler::addPatch: all " +
                                  std::to_string(set.m_config.m_maxPatches) +
@@ -424,6 +435,8 @@ std::weak_ptr<ScatterPatch> ScatterHandler::addPatch(
     patch->m_instance = instance.get();
     patch->m_slot = set.m_freeSlots.back();
     patch->m_origin = origin;
+    patch->m_boundsCentre = boundsCentre;
+    patch->m_boundsRadius = boundsRadius;
     set.m_freeSlots.pop_back();
     assert(patch->m_slot < set.m_config.m_maxPatches && "slot out of range");
 
@@ -453,36 +466,42 @@ void ScatterHandler::removePatch(std::weak_ptr<ScatterPatch> patchWeak) {
     std::erase(patch->m_instance->m_patches, patch);
 }
 
-void ScatterHandler::update(const FrameRenderParams& params) {
+void ScatterHandler::update(const FrameRenderParams& params,
+                            const std::vector<Cylinder>& casterVolumes) {
     // One barrier for every generation pass since last frame: they write separate
     // blocks, so need none between them
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     for (const std::shared_ptr<ScatterSet>& set : m_sets) {
-        buildFrameLists(*set, params);
-        cull(*set, params);
+        buildFrameLists(*set, params, casterVolumes);
+        cull(*set, params, set->m_cameraList, set->m_patchList.size(), false);
     }
 }
 
-void ScatterHandler::cull(const ScatterSet& set, const FrameRenderParams& params) const {
-    if (set.m_patchList.empty()) return;
+void ScatterHandler::cull(const ScatterSet& set, const FrameRenderParams& params,
+                          const ScatterDrawList& list, size_t patchCount,
+                          bool shadowCasters) const {
+    // Every count back to 0
+    uploadDynamicList(list.m_commandBuffer, set.m_drawCommands);
+    if (patchCount == 0) return;
 
     m_cullProgram->use();
     setInstanceFrameUniforms(m_cullProgram->getID(), params);
     m_cullProgram->setUniformUInt32("u_itemsPerPatch", set.m_config.m_itemsPerPatch);
     m_cullProgram->setUniformUInt32("u_kindCount",
                                     static_cast<uint32_t>(set.m_config.m_kinds.size()));
+    m_cullProgram->setUniformInt("u_shadowCasters", shadowCasters ? 1 : 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_itemBinding, set.m_itemBuffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_countBinding, set.m_countBuffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_instanceBinding, set.m_instanceListBuffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_patchBinding, set.m_patchListBuffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_kindBinding, set.m_kindTableBuffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_lodDistanceBinding, set.m_lodDistanceBuffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_commandBinding, set.m_commandBuffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_visibleBinding, set.m_visibleBuffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_commandBinding, list.m_commandBuffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_visibleBinding, list.m_visibleBuffer);
 
     // One workgroup per patch
-    glDispatchCompute(static_cast<GLuint>(set.m_patchList.size()), 1, 1);
+    glDispatchCompute(static_cast<GLuint>(patchCount), 1, 1);
 
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
 }
@@ -505,17 +524,7 @@ void ScatterHandler::renderGeometry(const FrameRenderParams& params) {
 
     for (const std::shared_ptr<ScatterSet>& set : m_sets) {
         if (set->m_patchList.empty()) continue;
-
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_itemBinding, set->m_itemBuffer);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_instanceBinding, set->m_instanceListBuffer);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_patchBinding, set->m_patchListBuffer);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_kindBinding, set->m_kindTableBuffer);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_lodDistanceBinding,
-                         set->m_lodDistanceBuffer);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_visibleBinding, set->m_visibleBuffer);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_impostorBinding, set->m_impostorBuffer);
-        glBindVertexArray(set->m_meshes.getVAO());
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, set->m_commandBuffer);
+        bindDrawInputs(*set, set->m_cameraList);
 
         // Depth first, then shade only what matches it: a pixel is shaded once
         // however many items overlap there
@@ -534,6 +543,42 @@ void ScatterHandler::renderGeometry(const FrameRenderParams& params) {
     }
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     glBindVertexArray(0);
+}
+
+void ScatterHandler::renderDepth(const FrameRenderParams& params) {
+    m_gbufferDepthProgram->use();
+    setInstanceFrameUniforms(m_gbufferDepthProgram->getID(), params);
+    // Every frame, as a shader reload resets it
+    m_gbufferDepthProgram->setUniformFloat("u_alphaCutoff", s_alphaCutoff);
+    // Earlier passes bind these units directly
+    m_textureStore->invalidateBindings();
+
+    for (const std::shared_ptr<ScatterSet>& set : m_sets) {
+        if (params.casterTier >= set->m_config.m_shadowCascades) continue;
+        assert(params.casterTier < set->m_tierEnds.size() &&
+               "Caster tier past the grouping: cascades and caster volumes disagree");
+        const size_t patchCount{set->m_tierEnds[params.casterTier]};
+        if (patchCount == 0) continue;
+
+        // The cascades share one list, each culled just before it is drawn
+        cull(*set, params, set->m_shadowList, patchCount, true);
+        bindDrawInputs(*set, set->m_shadowList);
+        drawLodMeshes(*set, *m_gbufferDepthProgram);
+    }
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    glBindVertexArray(0);
+}
+
+void ScatterHandler::bindDrawInputs(const ScatterSet& set, const ScatterDrawList& list) {
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_itemBinding, set.m_itemBuffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_instanceBinding, set.m_instanceListBuffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_patchBinding, set.m_patchListBuffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_kindBinding, set.m_kindTableBuffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_lodDistanceBinding, set.m_lodDistanceBuffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_visibleBinding, list.m_visibleBuffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, s_impostorBinding, set.m_impostorBuffer);
+    glBindVertexArray(set.m_meshes.getVAO());
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, list.m_commandBuffer);
 }
 
 void ScatterHandler::drawLodMeshes(const ScatterSet& set, ShaderProgram& program) const {
@@ -575,9 +620,11 @@ void ScatterHandler::bindTextures(const ScatterSet& set, const ShaderProgram& pr
     }
 }
 
-void ScatterHandler::buildFrameLists(ScatterSet& set, const FrameRenderParams& params) const {
+void ScatterHandler::buildFrameLists(ScatterSet& set, const FrameRenderParams& params,
+                                     const std::vector<Cylinder>& casterVolumes) const {
     set.m_instanceList.clear();
-    set.m_patchList.clear();
+    std::vector<ScatterPatchData> patches;
+    std::vector<unsigned int> tiers;
 
     for (const std::shared_ptr<ScatterInstance>& instance : set.m_instances) {
         // The pose CDLOD builds for the same body, so items and ground cannot drift
@@ -590,17 +637,27 @@ void ScatterHandler::buildFrameLists(ScatterSet& set, const FrameRenderParams& p
         set.m_instanceList.push_back(ScatterInstanceData{paddedRotation(pose.m_bodyRotation),
                                                          glm::vec4{glm::vec3{pose.m_scale}, 0.0f}});
 
+        std::vector<Cylinder> bodyVolumes;
+        for (const Cylinder& volume : casterVolumes) {
+            bodyVolumes.push_back(casterVolumeInBodySpace(volume, pose));
+        }
+
         for (const std::shared_ptr<ScatterPatch>& patch : instance->m_patches) {
             const glm::dvec3 cameraOffset{patch->m_origin - pose.m_cameraBodyPosition};
-            set.m_patchList.push_back(
+            patches.push_back(
                 ScatterPatchData{glm::vec3{cameraOffset}, patch->m_slot, instanceIndex, {}});
+            tiers.push_back(
+                casterTier(bodyVolumes, patch->m_boundsCentre, patch->m_boundsRadius));
         }
     }
+    // One tier per volume, plus the one holding what no volume reaches
+    TierGrouping<ScatterPatchData> grouped{
+        groupByTier(patches, tiers, casterVolumes.size() + 1)};
+    set.m_patchList = std::move(grouped.m_pieces);
+    set.m_tierEnds = std::move(grouped.m_tierEnds);
 
     uploadDynamicList(set.m_instanceListBuffer, set.m_instanceList);
     uploadDynamicList(set.m_patchListBuffer, set.m_patchList);
-    // Every count back to 0
-    uploadDynamicList(set.m_commandBuffer, set.m_drawCommands);
 }
 
 std::pair<bool, std::string> ScatterHandler::reloadShaders() {
@@ -721,7 +778,17 @@ void ScatterHandler::validateConfig(const ScatterSetConfig& config) {
             throw std::invalid_argument(prefix + "kind " + std::to_string(kind) +
                                         " has a negative impostor blend distance");
         }
-        meshCount += lods.size() + (impostor ? 1 : 0);
+        const std::optional<ScatterShadow>& shadow{config.m_kinds[kind].m_shadow};
+        if (shadow && shadow->m_maxDistance <= 0.0) {
+            throw std::invalid_argument(prefix + "kind " + std::to_string(kind) +
+                                        " has a shadow mesh that casts nowhere");
+        }
+        if (shadow && (shadow->m_fadeMetres < 0.0 ||
+                       shadow->m_fadeMetres > shadow->m_maxDistance)) {
+            throw std::invalid_argument(prefix + "kind " + std::to_string(kind) +
+                                        " has a shadow fade wider than its range");
+        }
+        meshCount += lods.size() + (impostor ? 1 : 0) + (shadow ? 1 : 0);
     }
     // The visible list is indexed by uint in the shaders
     const size_t visibleEntries{meshCount * config.m_maxPatches * config.m_itemsPerPatch};

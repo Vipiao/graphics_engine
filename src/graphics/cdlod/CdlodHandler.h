@@ -174,11 +174,9 @@ struct CdlodSurface {
     // frames only so their storage is reused.
     std::vector<CdlodLeaf> m_selectedLeaves;
     std::vector<CdlodPatch> m_selectedPatches;
-    // Which tier each patch fell in, parallel to m_selectedPatches until the sort
-    // consumes it, and the buffer the sort scatters into. Kept across frames only
-    // so their storage is reused.
+    // Which tier each patch fell in, parallel to m_selectedPatches until the
+    // grouping consumes it. Kept across frames only so its storage is reused.
     std::vector<unsigned int> m_patchTiers;
-    std::vector<CdlodPatch> m_sortedPatches;
     // How many patches sit at or below each tier, so index k is what a draw of
     // tier k asks for. One entry per tier plus one, the last being every patch.
     std::vector<size_t> m_tierPrefix{0};
@@ -308,11 +306,6 @@ private:
 
     bool m_wireframe{false};
 
-    // Scratch reused across frames and instances: the caster volumes carried into
-    // one body's frame, and the counting sort's per-tier write cursor.
-    std::vector<Cylinder> m_bodyCylinders;
-    std::vector<size_t> m_tierCursor;
-
     // The stage at stagePath with the surface's snippet spliced in at its
     // marker. Throws if the marker is missing.
     static std::string buildStageSource(const char* stagePath,
@@ -326,10 +319,6 @@ private:
     void selectVisibleNodes(CdlodSurface& surface, uint64_t time, double timeRemainder,
                             const glm::dvec3& camPos,
                             const std::vector<Cylinder>& casterVolumes);
-    // Groups the selection so every tier's patches sit together and the tiers run
-    // innermost first, leaving m_tierPrefix holding what a draw of each tier asks
-    // for. Counting sort, so the result is fixed by the tiers alone.
-    void sortPatchesByTier(CdlodSurface& surface, size_t tierCount);
     static void uploadSelection(CdlodSurface& surface);
 
     // Binds the surface's textures and pushes its scalars into the bound
